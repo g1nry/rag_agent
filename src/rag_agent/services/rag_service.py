@@ -1,5 +1,11 @@
 from rag_agent.core.config import Settings
-from rag_agent.domain.schemas import DocumentIngestResponse, RetrievalRequest, RetrievalResponse, RetrievalResult
+from rag_agent.domain.schemas import (
+    ContextItem,
+    DocumentIngestResponse,
+    RetrievalRequest,
+    RetrievalResponse,
+    RetrievalResult,
+)
 from rag_agent.rag.chunking import split_text
 from rag_agent.rag.retriever import cosine_similarity
 from rag_agent.services.llm_service import LLMService
@@ -38,9 +44,13 @@ class RAGService:
                     chunk_id=f"{stored_filename}:{index}",
                     text=chunk,
                     embedding=embedding,
-                    metadata={"filename": stored_filename},
+                    metadata={
+                        "filename": stored_filename,
+                        "chunk_index": index,
+                    },
                 )
             )
+
         self._vector_store.add_many(records)
         return DocumentIngestResponse(filename=stored_filename, chunks_indexed=len(records))
 
@@ -53,11 +63,25 @@ class RAGService:
         records = self._vector_store.load()
 
         scored = [
-            (cosine_similarity(query_embedding, record.embedding), record.text)
+            (cosine_similarity(query_embedding, record.embedding), record)
             for record in records
         ]
         scored.sort(key=lambda item: item[0], reverse=True)
+
         limit = top_k or self._settings.default_top_k
-        contexts = [text for score, text in scored[:limit] if score > 0]
+        contexts: list[ContextItem] = []
+
+        for score, record in scored[:limit]:
+            if score <= 0:
+                continue
+
+            contexts.append(
+                ContextItem(
+                    text=record.text,
+                    source=record.metadata.get("filename", "unknown"),
+                    chunk_id=record.chunk_id,
+                )
+            )
+
         return RetrievalResult(contexts=contexts)
 
