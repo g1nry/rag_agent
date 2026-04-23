@@ -101,6 +101,21 @@
     const contextsNode = document.getElementById("contexts");
     const uploadStatusNode = document.getElementById("upload-status");
 
+    function renderContexts(contexts) {
+      if (!contexts || !contexts.length) {
+        return "Контекст не найден";
+      }
+
+      return contexts
+        .map((item, index) => {
+          const source = item.source || "unknown";
+          const chunkId = item.chunk_id || "n/a";
+          const text = item.text || "";
+          return `${index + 1}. Источник: ${source}\nChunk: ${chunkId}\n\n${text}`;
+        })
+        .join("\n\n--------------------\n\n");
+    }
+
     document.getElementById("ask").addEventListener("click", async () => {
       const message = document.getElementById("question").value.trim();
       if (!message) {
@@ -113,12 +128,13 @@
 
       const response = await fetch("/api/v1/chat", {
         method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({message, use_rag: true, top_k: 4}),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message, use_rag: true, top_k: 4 }),
       });
+
       const data = await response.json();
       answerNode.textContent = data.answer || "Нет ответа";
-      contextsNode.textContent = (data.contexts || []).join("\n\n") || "Контекст не найден";
+      contextsNode.textContent = renderContexts(data.contexts || []);
     });
 
     document.getElementById("upload").addEventListener("click", async () => {
@@ -136,6 +152,7 @@
         method: "POST",
         body: formData,
       });
+
       const data = await response.json();
       uploadStatusNode.textContent = `Загружен ${data.filename}, индексировано чанков: ${data.chunks_indexed}`;
     });
