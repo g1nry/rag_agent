@@ -1,5 +1,10 @@
 from pydantic import BaseModel, Field
 
+class ContextItem(BaseModel):
+    text: str
+    source: str
+    chunk_id: str
+
 
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
@@ -9,7 +14,7 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     answer: str
-    contexts: list[str] = []
+    contexts: list[ContextItem] = Field(default_factory=list)
 
 
 class RetrievalRequest(BaseModel):
@@ -18,7 +23,7 @@ class RetrievalRequest(BaseModel):
 
 
 class RetrievalResponse(BaseModel):
-    contexts: list[str]
+    contexts: list[ContextItem] = Field(default_factory=list)
 
 
 class DocumentIngestResponse(BaseModel):
@@ -27,5 +32,5 @@ class DocumentIngestResponse(BaseModel):
 
 
 class RetrievalResult(BaseModel):
-    contexts: list[str]
+    contexts: list[ContextItem] = Field(default_factory=list)
 
