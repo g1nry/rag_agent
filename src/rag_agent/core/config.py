@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     chunk_overlap: int = Field(default=120, alias="CHUNK_OVERLAP")
     default_top_k: int = Field(default=4, alias="DEFAULT_TOP_K")
 
+    min_retrieval_score: float = Field(default=0.2, alias="MIN_RETRIEVAL_SCORE")
+
+
 
 @lru_cache
 def get_settings() -> Settings:
