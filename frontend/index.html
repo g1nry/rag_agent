@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RAG Agent MVP</title>
+  <style>
+    :root {
+      --bg: #f5efe4;
+      --surface: #fffaf2;
+      --ink: #1f1f1f;
+      --accent: #0f766e;
+      --muted: #6b665d;
+      --border: #d7ccb7;
+    }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top, #fffdf7 0%, var(--bg) 65%);
+      color: var(--ink);
+    }
+    .shell {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 32px 16px 48px;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 20px;
+      box-shadow: 0 16px 40px rgba(92, 76, 43, 0.08);
+      margin-bottom: 16px;
+    }
+    h1 {
+      margin-top: 0;
+    }
+    textarea, input, button {
+      width: 100%;
+      box-sizing: border-box;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      padding: 12px 14px;
+      font-size: 16px;
+    }
+    button {
+      background: var(--accent);
+      color: white;
+      border: none;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    button:hover {
+      opacity: 0.94;
+    }
+    .grid {
+      display: grid;
+      gap: 16px;
+    }
+    .answer, .contexts {
+      white-space: pre-wrap;
+      line-height: 1.5;
+    }
+    .muted {
+      color: var(--muted);
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="card">
+      <h1>RAG Agent MVP</h1>
+      <p class="muted">Минимальный UI для локального тестирования backend-сервиса.</p>
+    </section>
+
+    <section class="card grid">
+      <label for="question">Вопрос</label>
+      <textarea id="question" rows="6" placeholder="Введите запрос к модели"></textarea>
+      <button id="ask">Отправить в чат</button>
+      <div>
+        <strong>Ответ</strong>
+        <div id="answer" class="answer muted">Пока пусто</div>
+      </div>
+      <div>
+        <strong>Контекст RAG</strong>
+        <div id="contexts" class="contexts muted">Пока пусто</div>
+      </div>
+    </section>
+
+    <section class="card grid">
+      <label for="file">Загрузка документа</label>
+      <input id="file" type="file">
+      <button id="upload">Загрузить документ</button>
+      <div id="upload-status" class="muted">Документ еще не загружался</div>
+    </section>
+  </main>
+
+  <script>
+    const answerNode = document.getElementById("answer");
+    const contextsNode = document.getElementById("contexts");
+    const uploadStatusNode = document.getElementById("upload-status");
+
+    document.getElementById("ask").addEventListener("click", async () => {
+      const message = document.getElementById("question").value.trim();
+      if (!message) {
+        answerNode.textContent = "Введите вопрос.";
+        return;
+      }
+
+      answerNode.textContent = "Запрос выполняется...";
+      contextsNode.textContent = "";
+
+      const response = await fetch("/api/v1/chat", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({message, use_rag: true, top_k: 4}),
+      });
+      const data = await response.json();
+      answerNode.textContent = data.answer || "Нет ответа";
+      contextsNode.textContent = (data.contexts || []).join("\n\n") || "Контекст не найден";
+    });
+
+    document.getElementById("upload").addEventListener("click", async () => {
+      const fileInput = document.getElementById("file");
+      if (!fileInput.files.length) {
+        uploadStatusNode.textContent = "Сначала выберите файл.";
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("file", fileInput.files[0]);
+      uploadStatusNode.textContent = "Загрузка...";
+
+      const response = await fetch("/api/v1/documents/upload", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await response.json();
+      uploadStatusNode.textContent = `Загружен ${data.filename}, индексировано чанков: ${data.chunks_indexed}`;
+    });
+  </script>
+</body>
+</html>
+

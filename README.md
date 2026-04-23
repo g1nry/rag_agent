@@ -1,0 +1,75 @@
+# RAG Agent Backend MVP
+
+Независимый backend-сервис агента и RAG для LLM-системы. Проект рассчитан на локальную разработку и использует Ollama как внешний model backend через отдельный интеграционный слой.
+
+## Что внутри
+
+- FastAPI backend
+- отдельный `integrations/ollama` слой
+- базовая агентная orchestration-логика
+- простой RAG pipeline: ingestion -> chunking -> embeddings -> retrieval
+- минимальный web UI для локальной проверки
+
+## Ограничения MVP
+
+- сейчас поддерживается только Ollama
+- для чата и embeddings нужны доступные модели в Ollama
+- проект не зависит от Ansible-стенда и не требует его для локального запуска
+
+## Структура
+
+```text
+src/rag_agent/
+  api/                 HTTP API и роуты
+  agent/               orchestration логика агента
+  core/                конфиг и общие утилиты
+  domain/              pydantic-схемы
+  integrations/ollama/ клиент работы с Ollama
+  rag/                 chunking и retrieval
+  services/            прикладные сервисы
+  storage/             локальные файловые и индексные хранилища
+frontend/              простой тестовый UI
+data/                  локальные документы и индексы
+tests/                 тесты
+```
+
+## Быстрый старт
+
+1. Создать окружение и установить зависимости:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
+```
+
+2. Скопировать конфиг:
+
+```bash
+cp .env.example .env
+```
+
+3. Убедиться, что Ollama доступна и модели загружены:
+
+```bash
+ollama pull llama3.1:8b
+ollama pull nomic-embed-text
+```
+
+4. Запустить сервис:
+
+```bash
+uvicorn rag_agent.main:app --reload
+```
+
+5. Открыть UI:
+
+`http://localhost:8000/`
+
+## Основные endpoint'ы
+
+- `GET /health`
+- `POST /api/v1/chat`
+- `POST /api/v1/rag/search`
+- `POST /api/v1/documents/upload`
+
