@@ -15,7 +15,6 @@ data/documents/*
 !data/documents/.gitkeep
 data/indexes/*
 !data/indexes/.gitkeep
-storage/
 tmp/
 
 AGENTS.md
