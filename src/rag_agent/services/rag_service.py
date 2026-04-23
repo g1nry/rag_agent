@@ -72,7 +72,7 @@ class RAGService:
         contexts: list[ContextItem] = []
 
         for score, record in scored[:limit]:
-            if score <= 0:
+            if score < self._settings.min_retrieval_score:
                 continue
 
             contexts.append(
