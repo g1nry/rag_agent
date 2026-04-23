@@ -1,3 +1,17 @@
+Metadata-Version: 2.4
+Name: rag-agent
+Version: 0.1.0
+Summary: Minimal backend service for agent and RAG with Ollama integration.
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi<1.0.0,>=0.115.0
+Requires-Dist: httpx<1.0.0,>=0.27.0
+Requires-Dist: pydantic-settings<3.0.0,>=2.2.1
+Requires-Dist: python-multipart<1.0.0,>=0.0.9
+Requires-Dist: uvicorn[standard]<1.0.0,>=0.30.0
+Provides-Extra: dev
+Requires-Dist: pytest<9.0.0,>=8.2.0; extra == "dev"
+
 # RAG Agent Backend MVP
 
 Независимый backend-сервис агента и RAG для LLM-системы. Проект рассчитан на локальную разработку и использует Ollama как внешний model backend через отдельный интеграционный слой.
@@ -38,7 +52,7 @@ tests/                 тесты
 1. Создать окружение и установить зависимости:
 
 ```bash
-python3 -m venv .venv
+python -m venv .venv
 source .venv/bin/activate
 pip install -e .
 ```
