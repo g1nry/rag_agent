@@ -17,3 +17,6 @@ data/indexes/*
 !data/indexes/.gitkeep
 storage/
 tmp/
+
+AGENTS.md
+PROJECT_BRIEF.md
