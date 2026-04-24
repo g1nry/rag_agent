@@ -26,7 +26,20 @@ class JsonVectorStore:
     def add_many(self, records: list[VectorRecord]) -> None:
         existing = self.load()
         existing.extend(records)
-        payload = [record.model_dump(mode="json") for record in existing]
+        self._write(existing)
+
+    def replace_document(self, filename: str, records: list[VectorRecord]) -> None:
+        existing = self.load()
+        filtered = [
+            record
+            for record in existing
+            if record.metadata.get("filename") != filename
+        ]
+        filtered.extend(records)
+        self._write(filtered)
+
+    def _write(self, records: list[VectorRecord]) -> None:
+        payload = [record.model_dump(mode="json") for record in records]
         self._index_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
