@@ -16,6 +16,7 @@ data/documents/*
 data/indexes/*
 !data/indexes/.gitkeep
 tmp/
+*.egg-info/
 
 AGENTS.md
 PROJECT_BRIEF.md
