@@ -23,7 +23,7 @@ class RAGService:
     ) -> None:
         self._settings = settings
         self._document_store = document_store
-        self._vector_store = vector_store
+        self._vector_store.replace_document(stored_filename, records)
         self._llm_service = llm_service
 
     async def ingest_document(self, filename: str, content: bytes) -> DocumentIngestResponse:
