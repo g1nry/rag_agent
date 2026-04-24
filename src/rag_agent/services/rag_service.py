@@ -23,7 +23,7 @@ class RAGService:
     ) -> None:
         self._settings = settings
         self._document_store = document_store
-        self._vector_store.replace_document(stored_filename, records)
+        self._vector_store = vector_store
         self._llm_service = llm_service
 
     async def ingest_document(self, filename: str, content: bytes) -> DocumentIngestResponse:
@@ -51,7 +51,7 @@ class RAGService:
                 )
             )
 
-        self._vector_store.add_many(records)
+        self._vector_store.replace_document(stored_filename, records)
         return DocumentIngestResponse(filename=stored_filename, chunks_indexed=len(records))
 
     async def search(self, payload: RetrievalRequest) -> RetrievalResponse:

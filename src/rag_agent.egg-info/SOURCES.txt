@@ -33,3 +33,4 @@ src/rag_agent/storage/__init__.py
 src/rag_agent/storage/document_store.py
 src/rag_agent/storage/vector_store.py
 tests/test_chunking.py
+tests/test_rag_service.py
