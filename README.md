@@ -1,4 +1,4 @@
-# RAG Agent Backend MVP
+# RAG Agent Backend
 
 Независимый backend-сервис агента и RAG для LLM-системы. Проект рассчитан на локальную разработку и использует Ollama как внешний model backend через отдельный интеграционный слой.
 
