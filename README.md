@@ -232,6 +232,25 @@ python3 -m pytest tests/test_retrieval_service.py -v
 - `POST /api/v1/rag/search` — retrieval без генерации
 - `POST /api/v1/documents/upload` — загрузка документа в индекс
 
+## Ошибки Ollama
+
+Если backend не может корректно обратиться к Ollama, API теперь возвращает структурированные ошибки вместо общего внутреннего сбоя.
+
+Основные сценарии:
+
+- `503` — Ollama недоступна или до нее не удалось подключиться
+- `504` — запрос к Ollama превысил таймаут
+- `502` — Ollama вернула некорректный или неожиданный ответ
+
+Пример ответа:
+
+```json
+{
+  "detail": "Failed to connect to Ollama at http://localhost:11434.",
+  "error_code": "ollama_unavailable"
+}
+```
+
 ## Типовой сценарий работы
 
 1. Пользователь отправляет запрос из UI или внешнего веба.
@@ -370,6 +389,7 @@ python3 -m venv .venv
 - что Ollama действительно запущена
 - что адрес в `config.toml` совпадает с реальным адресом сервиса
 - что backend может достучаться до Ollama по HTTP API
+- какой код ошибки вернул backend: `503`, `504` или `502`
 
 ### Ollama доступна, но генерация или embeddings не работают
 

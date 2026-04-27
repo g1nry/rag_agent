@@ -1,12 +1,13 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from rag_agent.api.router import api_router
 from rag_agent.core.config import get_settings
+from rag_agent.integrations.ollama.exceptions import OllamaError
 
 
 @asynccontextmanager
@@ -24,6 +25,17 @@ app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.include_router(api_router, prefix="/api/v1")
 if settings.ui_enabled:
     app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
+
+
+@app.exception_handler(OllamaError)
+async def handle_ollama_error(_: Request, exc: OllamaError) -> JSONResponse:
+    payload = {
+        "detail": exc.detail,
+        "error_code": exc.error_code,
+    }
+    if exc.upstream_status_code is not None:
+        payload["upstream_status_code"] = exc.upstream_status_code
+    return JSONResponse(status_code=exc.status_code, content=payload)
 
 
 if settings.ui_enabled:
