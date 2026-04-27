@@ -1,8 +1,11 @@
 import json
+import os
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
+
+from rag_agent.storage.errors import IndexLoadError, IndexWriteError
 
 
 class VectorRecord(BaseModel):
@@ -20,8 +23,23 @@ class JsonVectorStore:
             self._index_path.write_text("[]", encoding="utf-8")
 
     def load(self) -> list[VectorRecord]:
-        raw_data = json.loads(self._index_path.read_text(encoding="utf-8"))
-        return [VectorRecord.model_validate(item) for item in raw_data]
+        try:
+            if not self._index_path.exists():
+                self._index_path.write_text("[]", encoding="utf-8")
+
+            raw_data = json.loads(self._index_path.read_text(encoding="utf-8"))
+            if not isinstance(raw_data, list):
+                raise IndexLoadError("Vector index has an unexpected JSON structure.")
+
+            return [VectorRecord.model_validate(item) for item in raw_data]
+        except IndexLoadError:
+            raise
+        except json.JSONDecodeError as exc:
+            raise IndexLoadError("Vector index contains invalid JSON.") from exc
+        except ValidationError as exc:
+            raise IndexLoadError("Vector index contains records in an invalid format.") from exc
+        except OSError as exc:
+            raise IndexLoadError("Vector index could not be read from disk.") from exc
 
     def add_many(self, records: list[VectorRecord]) -> None:
         existing = self.load()
@@ -40,7 +58,14 @@ class JsonVectorStore:
 
     def _write(self, records: list[VectorRecord]) -> None:
         payload = [record.model_dump(mode="json") for record in records]
-        self._index_path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        serialized = json.dumps(payload, ensure_ascii=False, indent=2)
+        temp_path = self._index_path.with_suffix(f"{self._index_path.suffix}.tmp")
+
+        try:
+            temp_path.write_text(serialized, encoding="utf-8")
+            os.replace(temp_path, self._index_path)
+        except OSError as exc:
+            raise IndexWriteError("Vector index could not be written atomically.") from exc
+        finally:
+            if temp_path.exists():
+                temp_path.unlink(missing_ok=True)

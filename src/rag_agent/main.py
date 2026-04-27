@@ -9,6 +9,7 @@ from rag_agent.api.router import api_router
 from rag_agent.core.config import get_settings
 from rag_agent.integrations.ollama.exceptions import OllamaError
 from rag_agent.services.document_errors import DocumentIngestionError
+from rag_agent.storage.errors import StorageError
 
 
 @asynccontextmanager
@@ -41,6 +42,17 @@ async def handle_ollama_error(_: Request, exc: OllamaError) -> JSONResponse:
 
 @app.exception_handler(DocumentIngestionError)
 async def handle_document_ingestion_error(_: Request, exc: DocumentIngestionError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "detail": exc.detail,
+            "error_code": exc.error_code,
+        },
+    )
+
+
+@app.exception_handler(StorageError)
+async def handle_storage_error(_: Request, exc: StorageError) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code,
         content={
