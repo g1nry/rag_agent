@@ -22,15 +22,20 @@ frontend_dir = Path(__file__).resolve().parents[2] / "frontend"
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.include_router(api_router, prefix="/api/v1")
-app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
+if settings.ui_enabled:
+    app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
 
 
-@app.get("/", include_in_schema=False)
-async def index() -> FileResponse:
-    return FileResponse(frontend_dir / "index.html")
+if settings.ui_enabled:
+    @app.get("/", include_in_schema=False)
+    async def index() -> FileResponse:
+        return FileResponse(frontend_dir / "index.html")
+else:
+    @app.get("/", include_in_schema=False)
+    async def index() -> dict[str, str]:
+        return {"message": "UI is disabled in config.toml"}
 
 
 @app.get("/health", tags=["system"])
 async def healthcheck() -> dict[str, str]:
     return {"status": "ok"}
-

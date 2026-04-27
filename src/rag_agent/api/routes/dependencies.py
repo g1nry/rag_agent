@@ -25,7 +25,10 @@ def get_vector_store() -> JsonVectorStore:
 @lru_cache
 def get_ollama_client() -> OllamaClient:
     settings = get_settings()
-    return OllamaClient(base_url=str(settings.ollama_base_url))
+    return OllamaClient(
+        base_url=str(settings.ollama_base_url),
+        timeout=settings.ollama_timeout,
+    )
 
 
 @lru_cache

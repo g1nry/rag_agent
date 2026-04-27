@@ -1,11 +1,12 @@
 .PHONY: install run test
 
+PYTHON ?= python3
+
 install:
-	python -m pip install -e .
+	$(PYTHON) -m pip install -e .
 
 run:
-	uvicorn rag_agent.main:app --reload
+	$(PYTHON) -m rag_agent --reload
 
 test:
-	pytest
-
+	$(PYTHON) -m pytest

@@ -1,0 +1,24 @@
+[app]
+name = "rag-agent"
+host = "0.0.0.0"
+port = 8000
+
+[ollama]
+base_url = "http://localhost:11434"
+chat_model = "llama3.2:1b"
+embedding_model = "nomic-embed-text"
+timeout = 60.0
+
+[data]
+dir = "./data"
+documents_dir = "./data/documents"
+index_path = "./data/indexes/vector_index.json"
+
+[rag]
+max_chunk_size = 800
+chunk_overlap = 120
+default_top_k = 4
+min_retrieval_score = 0.2
+
+[ui]
+enabled = true
