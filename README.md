@@ -80,6 +80,10 @@ chunk_overlap = 120
 default_top_k = 4
 min_retrieval_score = 0.2
 
+[documents]
+max_upload_size_bytes = 1048576
+allowed_extensions = [".txt", ".md"]
+
 [ui]
 enabled = true
 ```
@@ -231,6 +235,33 @@ python3 -m pytest tests/test_retrieval_service.py -v
 - `POST /api/v1/chat` — генерация ответа через agent-логику
 - `POST /api/v1/rag/search` — retrieval без генерации
 - `POST /api/v1/documents/upload` — загрузка документа в индекс
+
+## Ограничения загрузки документов
+
+Загрузка документов через `POST /api/v1/documents/upload` теперь валидируется до индексации.
+
+По умолчанию:
+
+- разрешены только `.txt` и `.md`
+- максимальный размер файла — `1048576` байт
+- файл должен быть UTF-8 encoded text
+- пустой файл не принимается
+
+Настройки находятся в секции `[documents]`:
+
+```toml
+[documents]
+max_upload_size_bytes = 1048576
+allowed_extensions = [".txt", ".md"]
+```
+
+Если проверка не проходит, backend возвращает структурированную ошибку.
+
+Основные сценарии:
+
+- `400` — пустой файл или неверная кодировка
+- `413` — файл слишком большой
+- `415` — неподдерживаемый тип документа
 
 ## Ошибки Ollama
 

@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from rag_agent.api.router import api_router
 from rag_agent.core.config import get_settings
 from rag_agent.integrations.ollama.exceptions import OllamaError
+from rag_agent.services.document_errors import DocumentIngestionError
 
 
 @asynccontextmanager
@@ -36,6 +37,17 @@ async def handle_ollama_error(_: Request, exc: OllamaError) -> JSONResponse:
     if exc.upstream_status_code is not None:
         payload["upstream_status_code"] = exc.upstream_status_code
     return JSONResponse(status_code=exc.status_code, content=payload)
+
+
+@app.exception_handler(DocumentIngestionError)
+async def handle_document_ingestion_error(_: Request, exc: DocumentIngestionError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "detail": exc.detail,
+            "error_code": exc.error_code,
+        },
+    )
 
 
 if settings.ui_enabled:

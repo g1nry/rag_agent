@@ -24,6 +24,8 @@ ENV_TO_FIELD = {
     "DEFAULT_TOP_K": "default_top_k",
     "MIN_RETRIEVAL_SCORE": "min_retrieval_score",
     "UI_ENABLED": "ui_enabled",
+    "MAX_UPLOAD_SIZE_BYTES": "max_upload_size_bytes",
+    "ALLOWED_DOCUMENT_EXTENSIONS": "allowed_document_extensions",
 }
 
 
@@ -45,6 +47,11 @@ class Settings(BaseModel):
     default_top_k: int = Field(default=4, alias="DEFAULT_TOP_K")
     min_retrieval_score: float = Field(default=0.2, alias="MIN_RETRIEVAL_SCORE")
     ui_enabled: bool = Field(default=True, alias="UI_ENABLED")
+    max_upload_size_bytes: int = Field(default=1_048_576, alias="MAX_UPLOAD_SIZE_BYTES")
+    allowed_document_extensions: list[str] = Field(
+        default_factory=lambda: [".txt", ".md"],
+        alias="ALLOWED_DOCUMENT_EXTENSIONS",
+    )
 
     @model_validator(mode="after")
     def fill_derived_paths(self) -> "Settings":
@@ -52,6 +59,10 @@ class Settings(BaseModel):
             self.documents_dir = self.data_dir / "documents"
         if self.index_path is None:
             self.index_path = self.data_dir / "indexes" / "vector_index.json"
+        self.allowed_document_extensions = [
+            extension.lower() if extension.startswith(".") else f".{extension.lower()}"
+            for extension in self.allowed_document_extensions
+        ]
         return self
 
 
@@ -75,6 +86,7 @@ def _load_config_file(config_path: Path) -> dict[str, Any]:
     data = raw_config.get("data", {})
     rag = raw_config.get("rag", {})
     ui = raw_config.get("ui", {})
+    documents = raw_config.get("documents", {})
 
     config: dict[str, Any] = {}
 
@@ -113,6 +125,11 @@ def _load_config_file(config_path: Path) -> dict[str, Any]:
     if "enabled" in ui:
         config["ui_enabled"] = ui["enabled"]
 
+    if "max_upload_size_bytes" in documents:
+        config["max_upload_size_bytes"] = documents["max_upload_size_bytes"]
+    if "allowed_extensions" in documents:
+        config["allowed_document_extensions"] = documents["allowed_extensions"]
+
     return config
 
 
@@ -121,6 +138,13 @@ def _load_env_overrides() -> dict[str, Any]:
     for env_name, field_name in ENV_TO_FIELD.items():
         value = os.getenv(env_name)
         if value is not None:
+            if env_name == "ALLOWED_DOCUMENT_EXTENSIONS":
+                overrides[field_name] = [
+                    item.strip()
+                    for item in value.split(",")
+                    if item.strip()
+                ]
+                continue
             overrides[field_name] = value
     return overrides
 

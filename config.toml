@@ -20,5 +20,9 @@ chunk_overlap = 120
 default_top_k = 4
 min_retrieval_score = 0.2
 
+[documents]
+max_upload_size_bytes = 1048576
+allowed_extensions = [".txt", ".md"]
+
 [ui]
 enabled = true
