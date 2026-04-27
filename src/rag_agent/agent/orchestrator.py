@@ -1,17 +1,17 @@
 from rag_agent.domain.schemas import ChatRequest, ChatResponse, ContextItem
 from rag_agent.services.llm_service import LLMService
-from rag_agent.services.rag_service import RAGService
+from rag_agent.services.retrieval_service import RetrievalService
 
 
 class AgentOrchestrator:
-    def __init__(self, llm_service: LLMService, rag_service: RAGService) -> None:
+    def __init__(self, llm_service: LLMService, retrieval_service: RetrievalService) -> None:
         self._llm_service = llm_service
-        self._rag_service = rag_service
+        self._retrieval_service = retrieval_service
 
     async def reply(self, payload: ChatRequest) -> ChatResponse:
         contexts: list[ContextItem] = []
         if payload.use_rag:
-            retrieval = await self._rag_service.retrieve_context(payload.message, payload.top_k)
+            retrieval = await self._retrieval_service.retrieve_context(payload.message, payload.top_k)
             contexts = retrieval.contexts
 
         prompt = self._build_prompt(payload.message, contexts)
@@ -34,4 +34,3 @@ class AgentOrchestrator:
             f"Контекст:\n{joined_context}\n\n"
             f"Вопрос пользователя:\n{message}"
         )
-

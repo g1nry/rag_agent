@@ -2,7 +2,7 @@ import asyncio
 from pathlib import Path
 
 from rag_agent.core.config import Settings
-from rag_agent.services.rag_service import RAGService
+from rag_agent.services.document_ingestion_service import DocumentIngestionService
 from rag_agent.storage.document_store import DocumentStore
 from rag_agent.storage.vector_store import JsonVectorStore
 
@@ -36,7 +36,7 @@ def test_reingest_replaces_existing_document_chunks(tmp_path: Path) -> None:
     vector_store = JsonVectorStore(settings.index_path)
     llm_service = FakeLLMService()
 
-    rag_service = RAGService(
+    ingestion_service = DocumentIngestionService(
         settings=settings,
         document_store=document_store,
         vector_store=vector_store,
@@ -46,10 +46,10 @@ def test_reingest_replaces_existing_document_chunks(tmp_path: Path) -> None:
     first_content = ("alpha " * 30).encode("utf-8")
     second_content = "beta".encode("utf-8")
 
-    asyncio.run(rag_service.ingest_document("notes.txt", first_content))
+    asyncio.run(ingestion_service.ingest_document("notes.txt", first_content))
     first_records = vector_store.load()
 
-    asyncio.run(rag_service.ingest_document("notes.txt", second_content))
+    asyncio.run(ingestion_service.ingest_document("notes.txt", second_content))
     second_records = vector_store.load()
 
     assert len(first_records) > 1

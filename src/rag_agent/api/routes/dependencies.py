@@ -3,8 +3,9 @@ from functools import lru_cache
 from rag_agent.agent.orchestrator import AgentOrchestrator
 from rag_agent.core.config import Settings, get_settings
 from rag_agent.integrations.ollama.client import OllamaClient
+from rag_agent.services.document_ingestion_service import DocumentIngestionService
 from rag_agent.services.llm_service import LLMService
-from rag_agent.services.rag_service import RAGService
+from rag_agent.services.retrieval_service import RetrievalService
 from rag_agent.storage.document_store import DocumentStore
 from rag_agent.storage.vector_store import JsonVectorStore
 
@@ -34,10 +35,19 @@ def get_llm_service() -> LLMService:
 
 
 @lru_cache
-def get_rag_service() -> RAGService:
-    return RAGService(
+def get_document_ingestion_service() -> DocumentIngestionService:
+    return DocumentIngestionService(
         settings=get_settings(),
         document_store=get_document_store(),
+        vector_store=get_vector_store(),
+        llm_service=get_llm_service(),
+    )
+
+
+@lru_cache
+def get_retrieval_service() -> RetrievalService:
+    return RetrievalService(
+        settings=get_settings(),
         vector_store=get_vector_store(),
         llm_service=get_llm_service(),
     )
@@ -47,6 +57,5 @@ def get_rag_service() -> RAGService:
 def get_agent_orchestrator() -> AgentOrchestrator:
     return AgentOrchestrator(
         llm_service=get_llm_service(),
-        rag_service=get_rag_service(),
+        retrieval_service=get_retrieval_service(),
     )
-

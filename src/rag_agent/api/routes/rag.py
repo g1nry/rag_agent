@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends
 
-from rag_agent.api.routes.dependencies import get_rag_service
+from rag_agent.api.routes.dependencies import get_retrieval_service
 from rag_agent.domain.schemas import RetrievalRequest, RetrievalResponse
-from rag_agent.services.rag_service import RAGService
+from rag_agent.services.retrieval_service import RetrievalService
 
 router = APIRouter()
 
@@ -10,7 +10,6 @@ router = APIRouter()
 @router.post("/search", response_model=RetrievalResponse)
 async def search(
     payload: RetrievalRequest,
-    rag_service: RAGService = Depends(get_rag_service),
+    retrieval_service: RetrievalService = Depends(get_retrieval_service),
 ) -> RetrievalResponse:
-    return await rag_service.search(payload)
-
+    return await retrieval_service.search(payload)
