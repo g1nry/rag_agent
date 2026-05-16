@@ -1,4 +1,4 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from langgraph.prebuilt import create_react_agent
 from langchain_ollama import ChatOllama
 from langchain_core.messages import HumanMessage
@@ -6,13 +6,14 @@ import logging
 
 from ..tools.registry import tool_registry
 from ..tools.langchain_adapter import LangChainToolAdapter
-from ..core.config import get_config  # если нет — замени на твой способ получения конфига
+from ..security.hitl import hitl_manager
+from ..core.config import get_config
 
 logger = logging.getLogger(__name__)
 
 
 class RedTeamAgent:
-    """Главный ReAct-агент"""
+    """Главный ReAct-агент с поддержкой Human-in-the-Loop"""
     
     def __init__(self):
         self.llm = None
@@ -32,7 +33,6 @@ class RedTeamAgent:
             temperature=0.7,
         )
         
-        # Адаптируем наши инструменты под LangChain
         raw_tools = tool_registry.get_all_tools()
         langchain_tools = [LangChainToolAdapter(tool) for tool in raw_tools]
         
@@ -44,8 +44,14 @@ class RedTeamAgent:
         self.initialized = True
         logger.info(f"✅ RedTeamAgent initialized with {len(langchain_tools)} tools")
 
-
-    async def ainvoke(self, message: str, thread_id: str = "default", **kwargs) -> Dict[str, Any]:
+    async def ainvoke(
+        self, 
+        message: str, 
+        thread_id: str = "default",
+        auto_confirm_medium: bool = True,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """Основной метод вызова агента с поддержкой HITL"""
         if not self.initialized:
             await self.initialize()
         
