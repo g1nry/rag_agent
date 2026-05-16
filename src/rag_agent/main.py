@@ -1,11 +1,11 @@
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
+from fastapi.responses import HTMLResponse
 import logging
 
 from .agents import red_team_agent
 from .services.retrieval_service import retrieval_service
-from .api.router import api_router   # ← старый роутер
 
 logger = logging.getLogger(__name__)
 
@@ -27,12 +27,38 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="RAG RedTeam Agent", version="0.2.0", lifespan=lifespan)
 
-# === СТАРЫЕ РОУТЫ (как в README) ===
-app.include_router(api_router, prefix="/api/v1")
 
-# === НОВЫЙ АГЕНТ ===
+# === ГЛАВНАЯ СТРАНИЦА (для вебчика) ===
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    return """
+    <html>
+        <head><title>RAG RedTeam Agent</title></head>
+        <body>
+            <h1>🤖 RAG RedTeam Agent</h1>
+            <p>Backend работает. Используй <code>POST /api/agent/chat</code> или <code>POST /api/v1/chat</code></p>
+        </body>
+    </html>
+    """
+
+
+# === ОСНОВНОЙ ЭНДПОИНТ ДЛЯ АГЕНТА ===
 @app.post("/api/agent/chat")
 async def agent_chat(request: ChatRequest):
+    result = await red_team_agent.ainvoke(
+        message=request.message,
+        thread_id=request.thread_id
+    )
+    return {
+        "answer": result.get("response", ""),
+        "contexts": []
+    }
+
+
+# === СТАРЫЙ ЭНДПОИНТ (теперь тоже через агента) ===
+@app.post("/api/v1/chat")
+async def legacy_chat(request: ChatRequest):
+    """Старый эндпоинт — теперь тоже использует RedTeamAgent"""
     result = await red_team_agent.ainvoke(
         message=request.message,
         thread_id=request.thread_id
