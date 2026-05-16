@@ -30,26 +30,28 @@ class RedTeamAgent:
         await tool_registry.initialize(retrieval_service)
         
         self.llm = ChatOllama(
-            model=getattr(self.config, "ollama_chat_model", "llama3.2:latest"),
+            model=getattr(self.config, "ollama_chat_model", "qwen2.5:7b"),
             base_url=str(getattr(self.config, "ollama_base_url", "http://localhost:11434")),
-            temperature=0.7,
+            temperature=0.3,  # чуть ниже для стабильности
         )
         
+        raw_tools = tool_registry.get_all_tools()
+        langchain_tools = [LangChainToolAdapter(tool) for tool in raw_tools]
+        
+        # === СИЛЬНЫЙ ПРОМПТ ===
         system_prompt = """Ты — полезный ассистент с доступом к инструментам.
-        ПРАВИЛА:
-        1. Всегда используй реальные результаты инструментов.
-        2. Если инструмент вернул пустой результат — так и говори.
-        3. Никогда не придумывай файлы, которых нет.
-        4. Отвечай только на русском языке.
-        5. Если команда опасная — выполняй, но в финальном ответе будь осторожен."""
+        ПРАВИЛА (СТРОГО ВЫПОЛНЯЙ):
+        1. Всегда используй РЕАЛЬНЫЕ результаты инструментов.
+        2. Если инструмент вернул результат — опирайся ТОЛЬКО на него.
+        3. Перед тем как сказать "файл не существует" — ОБЯЗАТЕЛЬНО выполни tool file_read или ls.
+        4. Никогда не придумывай содержимое файлов.
+        5. Отвечай ТОЛЬКО на русском языке.
+        6. Если команда опасная — выполняй, но в финальном ответе будь осторожен."""
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", system_prompt),
             MessagesPlaceholder(variable_name="messages"),
         ])
-
-        raw_tools = tool_registry.get_all_tools()
-        langchain_tools = [LangChainToolAdapter(tool) for tool in raw_tools]
         
         self.graph = create_react_agent(
             model=self.llm,
