@@ -1,28 +1,26 @@
-from typing import Dict, Any, Optional, List
-from langgraph.graph import StateGraph, END
+from typing import Dict, Any, List
 from langgraph.prebuilt import create_react_agent
 from langchain_ollama import ChatOllama
-from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_core.messages import HumanMessage
+import logging
 
 from ..tools.registry import tool_registry
-from ..security.permission import permission_manager
-from ..core.config import get_config
-import logging
+from ..tools.langchain_adapter import LangChainToolAdapter
+from ..core.config import get_config  # если нет — замени на твой способ получения конфига
 
 logger = logging.getLogger(__name__)
 
 
 class RedTeamAgent:
-    """Главный ReAct-агент для исследования уязвимостей LLM"""
+    """Главный ReAct-агент"""
     
     def __init__(self):
         self.llm = None
         self.graph = None
-        self.config = get_config()
         self.initialized = False
-    
+        self.config = get_config() if 'get_config' in globals() else {}
+
     async def initialize(self, retrieval_service=None):
-        """Инициализация агента"""
         if self.initialized:
             return
             
@@ -32,23 +30,22 @@ class RedTeamAgent:
             model=self.config.get("ollama", {}).get("model", "llama3.2:latest"),
             base_url=self.config.get("ollama", {}).get("base_url", "http://localhost:11434"),
             temperature=0.7,
-            num_ctx=8192,
         )
         
-        tools = [tool for tool in tool_registry.get_all_tools()]
+        # Адаптируем наши инструменты под LangChain
+        raw_tools = tool_registry.get_all_tools()
+        langchain_tools = [LangChainToolAdapter(tool) for tool in raw_tools]
         
-        # Создаём ReAct агент
         self.graph = create_react_agent(
             model=self.llm,
-            tools=tools,
-            # Можно добавить custom system prompt позже
+            tools=langchain_tools,
         )
         
         self.initialized = True
-        logger.info(f"✅ RedTeamAgent initialized with {len(tools)} tools")
-    
-    async def ainvoke(self, message: str, thread_id: str = "default", user_confirmed: bool = False, **kwargs) -> Dict[str, Any]:
-        """Основной метод вызова агента"""
+        logger.info(f"✅ RedTeamAgent initialized with {len(langchain_tools)} tools")
+
+
+    async def ainvoke(self, message: str, thread_id: str = "default", **kwargs) -> Dict[str, Any]:
         if not self.initialized:
             await self.initialize()
         
@@ -62,24 +59,13 @@ class RedTeamAgent:
                 "response": final_message,
                 "thread_id": thread_id,
                 "success": True,
-                "used_tools": self._extract_used_tools(result)
             }
         except Exception as e:
-            logger.error(f"Agent error: {e}")
+            logger.error(f"Agent execution error: {e}", exc_info=True)
             return {
-                "response": f"Ошибка при обработке запроса: {str(e)}",
+                "response": f"Ошибка агента: {str(e)}",
                 "success": False
             }
-    
-    def _extract_used_tools(self, result) -> List[str]:
-        """Извлекает названия использованных инструментов (для отладки)"""
-        tools = []
-        for msg in result.get("messages", []):
-            if hasattr(msg, "tool_calls") and msg.tool_calls:
-                for call in msg.tool_calls:
-                    tools.append(call.get("name"))
-        return tools
 
 
-# Singleton
 red_team_agent = RedTeamAgent()
