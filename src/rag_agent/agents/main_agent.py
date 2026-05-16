@@ -28,8 +28,8 @@ class RedTeamAgent:
         await tool_registry.initialize(retrieval_service)
         
         self.llm = ChatOllama(
-            model=self.config.get("ollama", {}).get("model", "llama3.2:latest"),
-            base_url=self.config.get("ollama", {}).get("base_url", "http://localhost:11434"),
+            model=getattr(self.config, "ollama_chat_model", "llama3.2:latest"),
+            base_url=str(getattr(self.config, "ollama_base_url", "http://localhost:11434")),
             temperature=0.7,
         )
         
