@@ -3,6 +3,9 @@ from rag_agent.domain.schemas import ContextItem, RetrievalRequest, RetrievalRes
 from rag_agent.rag.retriever import cosine_similarity
 from rag_agent.services.llm_service import LLMService
 from rag_agent.storage.vector_store import JsonVectorStore
+from rag_agent.core.config import get_settings
+from rag_agent.storage.vector_store import JsonVectorStore
+from rag_agent.services.llm_service import LLMService
 
 
 class RetrievalService:
@@ -46,3 +49,13 @@ class RetrievalService:
             )
 
         return RetrievalResult(contexts=contexts)
+
+_settings = get_settings()
+_vector_store = JsonVectorStore(_settings.index_path)
+_llm_service = LLMService(_settings)
+
+retrieval_service = RetrievalService(
+    settings=_settings,
+    vector_store=_vector_store,
+    llm_service=_llm_service,
+)
