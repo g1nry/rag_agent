@@ -5,7 +5,7 @@ import logging
 
 from .agents import red_team_agent
 from .services.retrieval_service import retrieval_service
-from .security.hitl import hitl_manager
+from .api.router import api_router   # ← старый роутер
 
 logger = logging.getLogger(__name__)
 
@@ -27,34 +27,25 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="RAG RedTeam Agent", version="0.2.0", lifespan=lifespan)
 
+# === СТАРЫЕ РОУТЫ (как в README) ===
+app.include_router(api_router, prefix="/api/v1")
 
-# === НОВЫЙ ЭНДПОИНТ ===
+# === НОВЫЙ АГЕНТ ===
 @app.post("/api/agent/chat")
 async def agent_chat(request: ChatRequest):
     result = await red_team_agent.ainvoke(
         message=request.message,
         thread_id=request.thread_id
     )
-    return result
-
-
-# === СТАРЫЙ ЭНДПОИНТ (для совместимости) ===
-@app.post("/api/v1/chat")
-async def legacy_chat(request: ChatRequest):
-    """Старый эндпоинт — перенаправляет на нового агента"""
-    result = await red_team_agent.ainvoke(
-        message=request.message,
-        thread_id=request.thread_id
-    )
     return {
         "answer": result.get("response", ""),
-        "contexts": []  # можно позже добавить реальные контексты
+        "contexts": []
     }
 
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "agent_initialized": red_team_agent.initialized}
 
 
 if __name__ == "__main__":
