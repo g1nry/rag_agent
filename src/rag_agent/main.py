@@ -1,77 +1,52 @@
+from fastapi import FastAPI
 from contextlib import asynccontextmanager
-from pathlib import Path
+import logging
 
-from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
+from .core.config import get_config
+from .agents import red_team_agent
+from .services.retrieval_service import retrieval_service  # твой существующий сервис
 
-from rag_agent.api.router import api_router
-from rag_agent.core.config import get_settings
-from rag_agent.integrations.ollama.exceptions import OllamaError
-from rag_agent.services.document_errors import DocumentIngestionError
-from rag_agent.storage.errors import StorageError
-
+logger = logging.getLogger(__name__)
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
-    settings = get_settings()
-    settings.documents_dir.mkdir(parents=True, exist_ok=True)
-    settings.index_path.parent.mkdir(parents=True, exist_ok=True)
+async def lifespan(app: FastAPI):
+    # Startup
+    logger.info("🚀 Starting RedTeamAgent...")
+    await red_team_agent.initialize(retrieval_service=retrieval_service)
+    logger.info("✅ RedTeamAgent initialized successfully")
     yield
+    # Shutdown
+    logger.info("🛑 Shutting down...")
+
+app = FastAPI(
+    title="RAG RedTeam Agent",
+    description="Agentic RAG with LangGraph for LLM security research",
+    version="0.2.0",
+    lifespan=lifespan
+)
+
+# Существующие роуты оставляем как есть...
+# Добавляем новый роут для агента
+
+@app.post("/api/agent/chat")
+async def agent_chat(request: dict):  # Можно сделать Pydantic модель позже
+    message = request.get("message")
+    thread_id = request.get("thread_id", "default")
+    
+    if not message:
+        return {"error": "Message is required"}
+    
+    result = await red_team_agent.ainvoke(message=message, thread_id=thread_id)
+    return result
 
 
-settings = get_settings()
-frontend_dir = Path(__file__).resolve().parents[2] / "frontend"
-
-app = FastAPI(title=settings.app_name, lifespan=lifespan)
-app.include_router(api_router, prefix="/api/v1")
-if settings.ui_enabled:
-    app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
+# Для совместимости со старым кодом
+@app.post("/chat")
+async def legacy_chat(request: dict):
+    """Legacy endpoint — можно перенаправлять на новый агент"""
+    return await agent_chat(request)
 
 
-@app.exception_handler(OllamaError)
-async def handle_ollama_error(_: Request, exc: OllamaError) -> JSONResponse:
-    payload = {
-        "detail": exc.detail,
-        "error_code": exc.error_code,
-    }
-    if exc.upstream_status_code is not None:
-        payload["upstream_status_code"] = exc.upstream_status_code
-    return JSONResponse(status_code=exc.status_code, content=payload)
-
-
-@app.exception_handler(DocumentIngestionError)
-async def handle_document_ingestion_error(_: Request, exc: DocumentIngestionError) -> JSONResponse:
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={
-            "detail": exc.detail,
-            "error_code": exc.error_code,
-        },
-    )
-
-
-@app.exception_handler(StorageError)
-async def handle_storage_error(_: Request, exc: StorageError) -> JSONResponse:
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={
-            "detail": exc.detail,
-            "error_code": exc.error_code,
-        },
-    )
-
-
-if settings.ui_enabled:
-    @app.get("/", include_in_schema=False)
-    async def index() -> FileResponse:
-        return FileResponse(frontend_dir / "index.html")
-else:
-    @app.get("/", include_in_schema=False)
-    async def index() -> dict[str, str]:
-        return {"message": "UI is disabled in config.toml"}
-
-
-@app.get("/health", tags=["system"])
-async def healthcheck() -> dict[str, str]:
-    return {"status": "ok"}
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
