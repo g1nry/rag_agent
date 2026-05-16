@@ -7,7 +7,7 @@ import logging
 from ..tools.registry import tool_registry
 from ..tools.langchain_adapter import LangChainToolAdapter
 from ..security.hitl import hitl_manager
-from ..core.config import get_config
+from ..core.config import get_settings as get_config
 
 logger = logging.getLogger(__name__)
 
