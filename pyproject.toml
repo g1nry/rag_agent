@@ -9,11 +9,18 @@ description = "Minimal backend service for agent and RAG with Ollama integration
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "fastapi>=0.115.0,<1.0.0",
-  "httpx>=0.27.0,<1.0.0",
-  "pydantic>=2.7.0,<3.0.0",
-  "python-multipart>=0.0.9,<1.0.0",
-  "uvicorn[standard]>=0.30.0,<1.0.0",
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "python-dotenv",
+    "tomli",
+    "langchain",
+    "langchain-community",
+    "langchain-ollama",
+    "langgraph",
+    "langsmith",           # для отладки (опционально)
+    "httpx",
+    "python-multipart",
 ]
 
 [project.optional-dependencies]
