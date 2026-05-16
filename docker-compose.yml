@@ -3,9 +3,19 @@ version: "3.9"
 services:
   backend:
     build: .
+    container_name: rag-redteam-agent
     ports:
       - "8000:8000"
     volumes:
       - ./config.toml:/app/config.toml:ro
       - ./data:/app/data
-    command: python -m rag_agent
+    environment:
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434   # если Ollama на хосте
+      # - OLLAMA_BASE_URL=http://ollama:11434               # если Ollama в соседнем контейнере
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
