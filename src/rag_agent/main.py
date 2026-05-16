@@ -25,24 +25,33 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="RAG RedTeam Agent", version="0.2.0", lifespan=lifespan)
+app = FastAPI(
+    title="RAG RedTeam Agent",
+    description="Agentic RAG + dangerous tools for LLM security research",
+    version="0.3.0",
+    lifespan=lifespan
+)
 
 
-# === ГЛАВНАЯ СТРАНИЦА (для вебчика) ===
 @app.get("/", response_class=HTMLResponse)
 async def root():
     return """
     <html>
         <head><title>RAG RedTeam Agent</title></head>
-        <body>
+        <body style="font-family: sans-serif; padding: 40px;">
             <h1>🤖 RAG RedTeam Agent</h1>
-            <p>Backend работает. Используй <code>POST /api/agent/chat</code> или <code>POST /api/v1/chat</code></p>
+            <p>Backend is running.</p>
+            <p>Main endpoints:</p>
+            <ul>
+                <li><code>POST /api/v1/chat</code></li>
+                <li><code>POST /api/agent/chat</code></li>
+                <li><code>GET /health</code></li>
+            </ul>
         </body>
     </html>
     """
 
 
-# === ОСНОВНОЙ ЭНДПОИНТ ДЛЯ АГЕНТА ===
 @app.post("/api/agent/chat")
 async def agent_chat(request: ChatRequest):
     result = await red_team_agent.ainvoke(
@@ -55,10 +64,8 @@ async def agent_chat(request: ChatRequest):
     }
 
 
-# === СТАРЫЙ ЭНДПОИНТ (теперь тоже через агента) ===
 @app.post("/api/v1/chat")
 async def legacy_chat(request: ChatRequest):
-    """Старый эндпоинт — теперь тоже использует RedTeamAgent"""
     result = await red_team_agent.ainvoke(
         message=request.message,
         thread_id=request.thread_id

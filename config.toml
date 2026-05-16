@@ -5,9 +5,9 @@ port = 8000
 
 [ollama]
 base_url = "http://localhost:11434"
-chat_model = "llama3.2:1b"
+chat_model = "qwen2.5:7b"
 embedding_model = "nomic-embed-text"
-timeout = 60.0
+timeout = 120.0
 
 [data]
 dir = "./data"
