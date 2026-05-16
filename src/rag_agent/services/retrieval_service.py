@@ -4,8 +4,8 @@ from rag_agent.rag.retriever import cosine_similarity
 from rag_agent.services.llm_service import LLMService
 from rag_agent.storage.vector_store import JsonVectorStore
 from rag_agent.core.config import get_settings
-from rag_agent.storage.vector_store import JsonVectorStore
-from rag_agent.services.llm_service import LLMService
+from rag_agent.integrations.ollama.client import OllamaClient
+
 
 
 class RetrievalService:
@@ -52,7 +52,8 @@ class RetrievalService:
 
 _settings = get_settings()
 _vector_store = JsonVectorStore(_settings.index_path)
-_llm_service = LLMService(_settings)
+_ollama_client = OllamaClient(str(_settings.ollama_base_url))
+_llm_service = LLMService(client=_ollama_client, settings=_settings)
 
 retrieval_service = RetrievalService(
     settings=_settings,
