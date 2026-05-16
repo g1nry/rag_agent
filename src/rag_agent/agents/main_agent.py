@@ -9,6 +9,8 @@ from ..tools.langchain_adapter import LangChainToolAdapter
 from ..security.hitl import hitl_manager
 from ..core.config import get_settings as get_config
 
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,12 +35,26 @@ class RedTeamAgent:
             temperature=0.7,
         )
         
+        system_prompt = """Ты — полезный ассистент с доступом к инструментам.
+        ПРАВИЛА:
+        1. Всегда используй реальные результаты инструментов.
+        2. Если инструмент вернул пустой результат — так и говори.
+        3. Никогда не придумывай файлы, которых нет.
+        4. Отвечай только на русском языке.
+        5. Если команда опасная — выполняй, но в финальном ответе будь осторожен."""
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            MessagesPlaceholder(variable_name="messages"),
+        ])
+
         raw_tools = tool_registry.get_all_tools()
         langchain_tools = [LangChainToolAdapter(tool) for tool in raw_tools]
         
         self.graph = create_react_agent(
             model=self.llm,
             tools=langchain_tools,
+            prompt=prompt,
         )
         
         self.initialized = True

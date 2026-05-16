@@ -1,20 +1,26 @@
 import os
 import subprocess
-from typing import Any
 import logging
-
 from .base import BaseTool, ToolMetadata
 
 logger = logging.getLogger(__name__)
 
 
+def _safe_str(text: str) -> str:
+    """Безопасное преобразование в UTF-8"""
+    if isinstance(text, bytes):
+        try:
+            return text.decode("utf-8", errors="replace")
+        except:
+            return text.decode("latin-1", errors="replace")
+    return str(text)
+
+
 class ShellExecuteTool(BaseTool):
-    """Опасный инструмент: выполнение shell-команд"""
-    
     def __init__(self):
         self.metadata = ToolMetadata(
             name="shell_execute",
-            description="Выполняет произвольную shell-команду в системе. ОЧЕНЬ ОПАСНО.",
+            description="Выполняет shell-команду. ОЧЕНЬ ОПАСНО.",
             risk_level="high",
             requires_confirmation=True,
             category="system"
@@ -22,62 +28,49 @@ class ShellExecuteTool(BaseTool):
 
     async def arun(self, command: str = "", timeout: int = 30, **kwargs) -> str:
         command = command or kwargs.get("command", "")
-        
-        # === ЛОГИ ===
-        import logging, os
-        logger = logging.getLogger(__name__)
-        logger.warning(f"🛠️  ShellExecuteTool called")
-        logger.warning(f"   Command: {command}")
-        logger.warning(f"   CWD: {os.getcwd()}")
-        # === КОНЕЦ ЛОГОВ ===
-        
         try:
             result = subprocess.run(
-                command,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                cwd=os.getcwd()
+                command, shell=True, capture_output=True, text=False, timeout=timeout
             )
-            
-            output = (result.stdout or "") + (result.stderr or "")
-            
-            # === ЛОГИ ===
-            logger.warning(f"   Return code: {result.returncode}")
-            logger.warning(f"   Output length: {len(output)} chars")
-            # === КОНЕЦ ЛОГОВ ===
-            
+            stdout = _safe_str(result.stdout)
+            stderr = _safe_str(result.stderr)
+            output = stdout + stderr
+
             if result.returncode == 0:
-                return f"✅ Команда выполнена успешно:\n{output}"
+                return f"✅ Выполнено:\n{output}"
             else:
-                return f"❌ Команда завершилась с ошибкой (code {result.returncode}):\n{output}"
-                
-        except subprocess.TimeoutExpired:
-            return "❌ Команда превысила время выполнения (timeout)"
+                return f"❌ Ошибка (код {result.returncode}):\n{output}"
         except Exception as e:
-            logger.error(f"Shell execution error: {e}")
-            return f"Ошибка выполнения команды: {str(e)}"
+            return f"❌ Ошибка выполнения: {str(e)}"
 
 
 class FileWriteTool(BaseTool):
     def __init__(self):
         self.metadata = ToolMetadata(
             name="file_write",
-            description="Записывает текст в файл. Высокий риск.",
+            description="Записывает текст в файл.",
             risk_level="high",
             requires_confirmation=True,
+            category="filesystem"
         )
 
     async def arun(self, filepath: str = "", content: str = "", **kwargs) -> str:
         filepath = filepath or kwargs.get("filepath", "")
         content = content or kwargs.get("content", "")
+        try:
+            os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(content)
+            return f"✅ Файл записан: {filepath}"
+        except Exception as e:
+            return f"❌ Ошибка записи: {str(e)}"
+
 
 class FileReadTool(BaseTool):
     def __init__(self):
         self.metadata = ToolMetadata(
             name="file_read",
-            description="Читает содержимое файла. Может быть опасно, если читать чувствительные данные.",
+            description="Читает содержимое файла.",
             risk_level="high",
             requires_confirmation=True,
             category="filesystem"
@@ -86,18 +79,17 @@ class FileReadTool(BaseTool):
     async def arun(self, filepath: str = "", **kwargs) -> str:
         filepath = filepath or kwargs.get("filepath", "")
         try:
-            with open(filepath, "r", encoding="utf-8") as f:
-                content = f.read()
-            return f"✅ Содержимое файла {filepath}:\n{content}"
+            with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+                return f"✅ Содержимое {filepath}:\n{f.read()}"
         except Exception as e:
-            return f"❌ Ошибка чтения файла: {str(e)}"
+            return f"❌ Ошибка чтения: {str(e)}"
 
 
 class FileDeleteTool(BaseTool):
     def __init__(self):
         self.metadata = ToolMetadata(
             name="file_delete",
-            description="Удаляет файл или директорию. ОЧЕНЬ ОПАСНО.",
+            description="Удаляет файл или папку. ОЧЕНЬ ОПАСНО.",
             risk_level="high",
             requires_confirmation=True,
             category="filesystem"
@@ -111,7 +103,7 @@ class FileDeleteTool(BaseTool):
                 shutil.rmtree(filepath)
             else:
                 os.remove(filepath)
-            return f"✅ Файл/директория удалена: {filepath}"
+            return f"✅ Удалено: {filepath}"
         except Exception as e:
             return f"❌ Ошибка удаления: {str(e)}"
 
@@ -120,7 +112,7 @@ class MkdirTool(BaseTool):
     def __init__(self):
         self.metadata = ToolMetadata(
             name="mkdir",
-            description="Создаёт директорию (включая родительские).",
+            description="Создаёт директорию.",
             risk_level="medium",
             requires_confirmation=False,
             category="filesystem"
@@ -132,14 +124,14 @@ class MkdirTool(BaseTool):
             os.makedirs(path, exist_ok=True)
             return f"✅ Директория создана: {path}"
         except Exception as e:
-            return f"❌ Ошибка создания директории: {str(e)}"
+            return f"❌ Ошибка: {str(e)}"
 
 
 class ChmodTool(BaseTool):
     def __init__(self):
         self.metadata = ToolMetadata(
             name="chmod",
-            description="Меняет права доступа к файлу (например: 755, 644).",
+            description="Меняет права доступа (например 777).",
             risk_level="high",
             requires_confirmation=True,
             category="filesystem"
@@ -150,11 +142,11 @@ class ChmodTool(BaseTool):
         mode = mode or kwargs.get("mode", "")
         try:
             os.chmod(filepath, int(mode, 8))
-            return f"✅ Права изменены: {filepath} → {mode}"
+            return f"✅ Права {filepath} → {mode}"
         except Exception as e:
-            return f"❌ Ошибка изменения прав: {str(e)}"
+            return f"❌ Ошибка: {str(e)}"
 
-# Фабрика для регистрации
+
 def create_dangerous_tools():
     return [
         ShellExecuteTool(),
