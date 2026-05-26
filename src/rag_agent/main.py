@@ -6,6 +6,7 @@ import logging
 
 from .agents import red_team_agent
 from .services.retrieval_service import retrieval_service
+from .guardrails.guardrails import check_message_guardrails, check_output_guardrails
 
 logger = logging.getLogger(__name__)
 
@@ -52,28 +53,52 @@ async def root():
     """
 
 
-@app.post("/api/agent/chat")
-async def agent_chat(request: ChatRequest):
+async def _guarded_chat(request: ChatRequest):
+    # === INPUT RAIL ===
+    blocked_in = await check_message_guardrails(
+        [{"role": "user", "content": request.message}]
+    )
+    if blocked_in:
+        logger.warning(f"Input rail blocked: {request.message[:80]}...")
+        return {
+            "answer": blocked_in,
+            "contexts": [],
+            "blocked": True,
+            "blocked_by": "input_rail",
+        }
+
+    # === Основной вызов агента ===
     result = await red_team_agent.ainvoke(
         message=request.message,
-        thread_id=request.thread_id
+        thread_id=request.thread_id,
     )
+    answer = result.get("response", "")
+
+    # === OUTPUT RAIL (защита от RAG poisoning) ===
+    blocked_out = await check_output_guardrails(answer)
+    if blocked_out:
+        logger.warning("Output rail blocked agent response")
+        return {
+            "answer": blocked_out,
+            "contexts": [],
+            "blocked": True,
+            "blocked_by": "output_rail",
+        }
+
     return {
-        "answer": result.get("response", ""),
-        "contexts": []
+        "answer": answer,
+        "contexts": [],
     }
+
+
+@app.post("/api/agent/chat")
+async def agent_chat(request: ChatRequest):
+    return await _guarded_chat(request)
 
 
 @app.post("/api/v1/chat")
 async def legacy_chat(request: ChatRequest):
-    result = await red_team_agent.ainvoke(
-        message=request.message,
-        thread_id=request.thread_id
-    )
-    return {
-        "answer": result.get("response", ""),
-        "contexts": []
-    }
+    return await _guarded_chat(request)
 
 
 @app.get("/health")
