@@ -10,8 +10,8 @@ services:
       - ./config.toml:/app/config.toml:ro
       - ./data:/app/data
     environment:
-      - OLLAMA_BASE_URL=http://10.8.1.1:11434
-      - NEMO_GUARDRAILS_OLLAMA_URL=http://10.8.1.1:11434
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - NEMO_GUARDRAILS_OLLAMA_URL=http://host.docker.internal:11434
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
