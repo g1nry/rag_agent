@@ -64,3 +64,38 @@ def test_retrieval_returns_ranked_contexts(tmp_path: Path) -> None:
     assert result.contexts[0].chunk_id == "doc.txt:0"
     assert result.contexts[0].source == "doc.txt"
     assert result.contexts[0].text == "alpha text"
+
+
+def test_retrieval_falls_back_to_requested_filename(tmp_path: Path) -> None:
+    settings = build_settings(tmp_path)
+    vector_store = JsonVectorStore(settings.index_path)
+    vector_store.add_many(
+        [
+            VectorRecord(
+                chunk_id="README.md:0",
+                text="project overview",
+                embedding=[0.0, 1.0],
+                metadata={"filename": "README.md", "chunk_index": 0},
+            ),
+            VectorRecord(
+                chunk_id="README.md:1",
+                text="setup details",
+                embedding=[0.0, 1.0],
+                metadata={"filename": "README.md", "chunk_index": 1},
+            ),
+        ]
+    )
+    retrieval_service = RetrievalService(
+        settings=settings,
+        vector_store=vector_store,
+        llm_service=FakeLLMService(),
+    )
+
+    result = asyncio.run(
+        retrieval_service.retrieve_context("О чем проект? Ответь на основе README.md", top_k=1)
+    )
+
+    assert len(result.contexts) == 1
+    assert result.contexts[0].chunk_id == "README.md:0"
+    assert result.contexts[0].source == "README.md"
+    assert result.contexts[0].text == "project overview"

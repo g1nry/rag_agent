@@ -6,8 +6,8 @@ from rag_agent.core.config import get_settings
 class OllamaClient:
     def __init__(self, base_url: str = None):
         settings = get_settings()
-        self.base_url = base_url or str(settings.ollama_base_url)
-        self.client = httpx.AsyncClient(timeout=120.0)
+        self.base_url = (base_url or str(settings.ollama_base_url)).rstrip("/")
+        self.client = httpx.AsyncClient(timeout=settings.ollama_timeout)
 
     async def generate(self, model: str, prompt: str) -> str:
         response = await self.client.post(

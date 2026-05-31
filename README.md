@@ -197,9 +197,18 @@ docker compose up --build
 curl -X POST http://localhost:8000/api/v1/chat \
   -H "Content-Type: application/json" \
   -d '{
-    "message": "твой вопрос или команда здесь"
+    "message": "твой вопрос или команда здесь",
+    "thread_id": "default",
+    "use_rag": true,
+    "top_k": 4
   }'
 ```
+
+Поля JSON-запроса:
+- `message` — текст вопроса или команды.
+- `thread_id` — идентификатор диалога, по умолчанию `"default"`.
+- `use_rag` — включить поиск по загруженным документам перед ответом.
+- `top_k` — сколько фрагментов из RAG-индекса взять в контекст.
 
 ### Через Python (для интеграции)
 
@@ -224,6 +233,7 @@ print(response.json()["answer"])
 | GET   | `/health`              | Проверка, жив ли сервис               | `{"status": "ok"}`             |
 | POST  | `/api/v1/chat`         | Основной чат (совместимость)          | `{"answer": "...", "contexts": [...]}` |
 | POST  | `/api/agent/chat`      | Новый мощный агент                    | `{"answer": "...", "contexts": [...]}` |
+| POST  | `/api/v1/documents/upload` | Загрузка документа в RAG         | `{"filename": "...", "chunks_indexed": 18}` |
 
 ---
 
@@ -235,49 +245,80 @@ print(response.json()["answer"])
 curl -X POST http://localhost:8000/api/v1/chat \
   -H "Content-Type: application/json" \
   -d '{
-    "message": "О чем этот проект?",
+    "message": "О чем этот проект? Ответь на основе README.md",
+    "thread_id": "default",
     "use_rag": true,
     "top_k": 3
   }'
 ```
 
-### Пример 2: Выполнение команды
+### Пример 2: Загрузка документа в RAG
+
+```bash
+curl -X POST http://localhost:8000/api/v1/documents/upload \
+  -F "file=@README.md;type=text/markdown"
+```
+
+Ответ:
+
+```json
+{
+  "filename": "README.md",
+  "chunks_indexed": 20
+}
+```
+
+`rag_search` — это внутренний инструмент агента для поиска по документам, загруженным через `/chat/v1/documents/upload`. Если документов еще нет или индекс пустой, агент может упомянуть `rag_search`, потому что пытается найти контекст в RAG-базе, но искать ему пока негде. Сначала загрузи `.txt` или `.md` файл, затем задавай вопрос с `"use_rag": true`.
+
+### Пример 3: Выполнение команды
 
 ```bash
 curl -X POST http://localhost:8000/api/agent/chat \
   -H "Content-Type: application/json" \
   -d '{
-    "message": "выполни команду ls -la"
+    "message": "выполни команду ls -la",
+    "thread_id": "default",
+    "use_rag": false,
+    "top_k": 4
   }'
 ```
 
-### Пример 3: Создание файла
+### Пример 4: Создание файла
 
 ```bash
 curl -X POST http://localhost:8000/api/agent/chat \
   -H "Content-Type: application/json" \
   -d '{
-    "message": "создай файл test.txt с текстом \"Привет от агента\""
+    "message": "создай файл test.txt с текстом \"Привет от агента\"",
+    "thread_id": "default",
+    "use_rag": false,
+    "top_k": 4
   }'
 ```
 
-### Пример 4: Чтение файла
+### Пример 5: Чтение файла
 
 ```bash
 curl -X POST http://localhost:8000/api/agent/chat \
   -H "Content-Type: application/json" \
   -d '{
-    "message": "прочитай файл /etc/passwd"
+    "message": "прочитай файл /etc/passwd",
+    "thread_id": "default",
+    "use_rag": false,
+    "top_k": 4
   }'
 ```
 
-### Пример 5: Изменение прав
+### Пример 6: Изменение прав
 
 ```bash
 curl -X POST http://localhost:8000/api/agent/chat \
   -H "Content-Type: application/json" \
   -d '{
-    "message": "измени права файла test.txt на 777"
+    "message": "измени права файла test.txt на 777",
+    "thread_id": "default",
+    "use_rag": false,
+    "top_k": 4
   }'
 ```
 

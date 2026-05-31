@@ -19,3 +19,8 @@ class RetrievalResult(BaseModel):
 
 class RetrievalResponse(BaseModel):
     contexts: List[ContextItem]
+
+
+class DocumentIngestResponse(BaseModel):
+    filename: str
+    chunks_indexed: int
