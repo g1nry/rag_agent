@@ -18,14 +18,15 @@ from .storage.vector_store import JsonVectorStore
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+rag_llm_service = LLMService(
+    client=OllamaClient(str(settings.ollama_base_url)),
+    settings=settings,
+)
 document_ingestion_service = DocumentIngestionService(
     settings=settings,
     document_store=DocumentStore(settings.documents_dir),
     vector_store=JsonVectorStore(settings.index_path),
-    llm_service=LLMService(
-        client=OllamaClient(str(settings.ollama_base_url)),
-        settings=settings,
-    ),
+    llm_service=rag_llm_service,
 )
 
 
@@ -160,19 +161,29 @@ async def _guarded_rag_chat(request: RAGChatRequest):
         )
         for index, context in enumerate(contexts, start=1)
     )
-    agent_message = (
-        "Ответь на вопрос пользователя, используя найденный RAG-контекст. "
-        "Если контекст не содержит ответа, прямо скажи об этом. "
-        "Не утверждай, что файла нет, если контекст ниже был найден.\n\n"
-        f"RAG-контекст:\n{formatted_contexts}\n\n"
-        f"Вопрос пользователя:\n{request.message}"
+    prompt = (
+        "You are a RAG assistant. Answer in the same language as the user. "
+        "Use only the RAG context below. If the context is not enough, say that directly. "
+        "Do not call or mention tools, shell commands, file operations, or rag_search.\n\n"
+        f"RAG context:\n{formatted_contexts}\n\n"
+        f"User question:\n{request.message}"
     )
+    answer = await rag_llm_service.generate(prompt)
 
-    return await _run_agent_message(
-        message=agent_message,
-        thread_id=request.thread_id,
-        contexts=contexts,
-    )
+    blocked_out = await check_output_guardrails(answer)
+    if blocked_out:
+        logger.warning("Output rail blocked RAG response")
+        return {
+            "answer": blocked_out,
+            "contexts": [context.model_dump() for context in contexts],
+            "blocked": True,
+            "blocked_by": "output_rail",
+        }
+
+    return {
+        "answer": answer,
+        "contexts": [context.model_dump() for context in contexts],
+    }
 
 
 @app.post("/api/agent/chat")
