@@ -198,17 +198,15 @@ curl -X POST http://localhost:8000/api/v1/chat \
   -H "Content-Type: application/json" \
   -d '{
     "message": "твой вопрос или команда здесь",
-    "thread_id": "default",
-    "use_rag": true,
-    "top_k": 4
+    "thread_id": "default"
   }'
 ```
 
 Поля JSON-запроса:
 - `message` — текст вопроса или команды.
 - `thread_id` — идентификатор диалога, по умолчанию `"default"`.
-- `use_rag` — включить поиск по загруженным документам перед ответом.
-- `top_k` — сколько фрагментов из RAG-индекса взять в контекст.
+
+Для вопросов по загруженным документам используй `/api/v1/rag/chat`. Там дополнительно есть `top_k` — сколько фрагментов из RAG-индекса взять в контекст.
 
 ### Через Python (для интеграции)
 
@@ -231,9 +229,11 @@ print(response.json()["answer"])
 |-------|------------------------|---------------------------------------|--------------------------------|
 | GET   | `/`                    | Главная страница                      | HTML                           |
 | GET   | `/health`              | Проверка, жив ли сервис               | `{"status": "ok"}`             |
-| POST  | `/api/v1/chat`         | Основной чат (совместимость)          | `{"answer": "...", "contexts": [...]}` |
-| POST  | `/api/agent/chat`      | Новый мощный агент                    | `{"answer": "...", "contexts": [...]}` |
-| POST  | `/api/v1/documents/upload` | Загрузка документа в RAG         | `{"filename": "...", "chunks_indexed": 18}` |
+| POST  | `/api/v1/chat`         | Обычный чат без RAG-поиска            | `{"answer": "...", "contexts": []}` |
+| POST  | `/api/v1/rag/chat`     | Чат по загруженным документам         | `{"answer": "...", "contexts": [...]}` |
+| POST  | `/api/agent/chat`      | Агент с инструментами                 | `{"answer": "...", "contexts": []}` |
+| POST  | `/chat/v1/documents/upload` | Загрузка документа в RAG         | `{"filename": "...", "chunks_indexed": 18}` |
+| POST  | `/api/v1/documents/upload` | Совместимый путь загрузки документа | `{"filename": "...", "chunks_indexed": 18}` |
 
 ---
 
@@ -242,12 +242,11 @@ print(response.json()["answer"])
 ### Пример 1: Обычный вопрос
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/chat \
+curl -X POST http://localhost:8000/api/v1/rag/chat \
   -H "Content-Type: application/json" \
   -d '{
     "message": "О чем этот проект? Ответь на основе README.md",
     "thread_id": "default",
-    "use_rag": true,
     "top_k": 3
   }'
 ```
@@ -268,7 +267,7 @@ curl -X POST http://localhost:8000/api/v1/documents/upload \
 }
 ```
 
-`rag_search` — это внутренний инструмент агента для поиска по документам, загруженным через `/chat/v1/documents/upload`. Если документов еще нет или индекс пустой, агент может упомянуть `rag_search`, потому что пытается найти контекст в RAG-базе, но искать ему пока негде. Сначала загрузи `.txt` или `.md` файл, затем задавай вопрос с `"use_rag": true`.
+`rag_search` — это внутренний инструмент агента для поиска по документам, загруженным через `/chat/v1/documents/upload`. Если документов еще нет или индекс пустой, агент может упомянуть `rag_search`, потому что пытается найти контекст в RAG-базе, но искать ему пока негде. Сначала загрузи `.txt` или `.md` файл, затем задавай вопрос через `/api/v1/rag/chat`.
 
 ### Пример 3: Выполнение команды
 
@@ -277,9 +276,7 @@ curl -X POST http://localhost:8000/api/agent/chat \
   -H "Content-Type: application/json" \
   -d '{
     "message": "выполни команду ls -la",
-    "thread_id": "default",
-    "use_rag": false,
-    "top_k": 4
+    "thread_id": "default"
   }'
 ```
 
@@ -290,9 +287,7 @@ curl -X POST http://localhost:8000/api/agent/chat \
   -H "Content-Type: application/json" \
   -d '{
     "message": "создай файл test.txt с текстом \"Привет от агента\"",
-    "thread_id": "default",
-    "use_rag": false,
-    "top_k": 4
+    "thread_id": "default"
   }'
 ```
 
@@ -303,9 +298,7 @@ curl -X POST http://localhost:8000/api/agent/chat \
   -H "Content-Type: application/json" \
   -d '{
     "message": "прочитай файл /etc/passwd",
-    "thread_id": "default",
-    "use_rag": false,
-    "top_k": 4
+    "thread_id": "default"
   }'
 ```
 
@@ -316,9 +309,7 @@ curl -X POST http://localhost:8000/api/agent/chat \
   -H "Content-Type: application/json" \
   -d '{
     "message": "измени права файла test.txt на 777",
-    "thread_id": "default",
-    "use_rag": false,
-    "top_k": 4
+    "thread_id": "default"
   }'
 ```
 

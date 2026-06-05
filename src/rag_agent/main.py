@@ -32,7 +32,9 @@ document_ingestion_service = DocumentIngestionService(
 class ChatRequest(BaseModel):
     message: str
     thread_id: str = "default"
-    use_rag: bool = True
+
+
+class RAGChatRequest(ChatRequest):
     top_k: int = 4
 
 
@@ -67,6 +69,7 @@ async def root():
             <p>Main endpoints:</p>
             <ul>
                 <li><code>POST /api/v1/chat</code></li>
+                <li><code>POST /api/v1/rag/chat</code></li>
                 <li><code>POST /api/agent/chat</code></li>
                 <li><code>GET /health</code></li>
             </ul>
@@ -75,56 +78,33 @@ async def root():
     """
 
 
-async def _guarded_chat(request: ChatRequest):
+async def _check_input_guardrail(message: str):
     # === INPUT RAIL ===
     blocked_in = await check_message_guardrails(
-        [{"role": "user", "content": request.message}]
+        [{"role": "user", "content": message}]
     )
     if blocked_in:
-        logger.warning(f"Input rail blocked: {request.message[:80]}...")
+        logger.warning(f"Input rail blocked: {message[:80]}...")
         return {
             "answer": blocked_in,
             "contexts": [],
             "blocked": True,
             "blocked_by": "input_rail",
         }
+    return None
 
-    contexts = []
-    agent_message = request.message
 
-    if request.use_rag:
-        retrieval_result = await retrieval_service.retrieve_context(
-            query=request.message,
-            top_k=request.top_k,
-        )
-        contexts = retrieval_result.contexts
+async def _run_agent_message(
+    *,
+    message: str,
+    thread_id: str,
+    contexts: list | None = None,
+):
+    contexts = contexts or []
 
-        if not contexts:
-            return {
-                "answer": "Не удалось найти релевантный контекст в загруженных документах.",
-                "contexts": [],
-            }
-
-        if contexts:
-            formatted_contexts = "\n\n".join(
-                (
-                    f"[{index}] source={context.source}, chunk_id={context.chunk_id}\n"
-                    f"{context.text}"
-                )
-                for index, context in enumerate(contexts, start=1)
-            )
-            agent_message = (
-                "Ответь на вопрос пользователя, используя найденный RAG-контекст. "
-                "Если контекст не содержит ответа, прямо скажи об этом. "
-                "Не утверждай, что файла нет, если контекст ниже был найден.\n\n"
-                f"RAG-контекст:\n{formatted_contexts}\n\n"
-                f"Вопрос пользователя:\n{request.message}"
-            )
-
-    # === Основной вызов агента ===
     result = await red_team_agent.ainvoke(
-        message=agent_message,
-        thread_id=request.thread_id,
+        message=message,
+        thread_id=thread_id,
     )
     answer = result.get("response", "")
 
@@ -134,7 +114,7 @@ async def _guarded_chat(request: ChatRequest):
         logger.warning("Output rail blocked agent response")
         return {
             "answer": blocked_out,
-            "contexts": [],
+            "contexts": [context.model_dump() for context in contexts],
             "blocked": True,
             "blocked_by": "output_rail",
         }
@@ -143,6 +123,56 @@ async def _guarded_chat(request: ChatRequest):
         "answer": answer,
         "contexts": [context.model_dump() for context in contexts],
     }
+
+
+async def _guarded_chat(request: ChatRequest):
+    blocked = await _check_input_guardrail(request.message)
+    if blocked:
+        return blocked
+
+    return await _run_agent_message(
+        message=request.message,
+        thread_id=request.thread_id,
+    )
+
+
+async def _guarded_rag_chat(request: RAGChatRequest):
+    blocked = await _check_input_guardrail(request.message)
+    if blocked:
+        return blocked
+
+    retrieval_result = await retrieval_service.retrieve_context(
+        query=request.message,
+        top_k=request.top_k,
+    )
+    contexts = retrieval_result.contexts
+
+    if not contexts:
+        return {
+            "answer": "Не удалось найти релевантный контекст в загруженных документах.",
+            "contexts": [],
+        }
+
+    formatted_contexts = "\n\n".join(
+        (
+            f"[{index}] source={context.source}, chunk_id={context.chunk_id}\n"
+            f"{context.text}"
+        )
+        for index, context in enumerate(contexts, start=1)
+    )
+    agent_message = (
+        "Ответь на вопрос пользователя, используя найденный RAG-контекст. "
+        "Если контекст не содержит ответа, прямо скажи об этом. "
+        "Не утверждай, что файла нет, если контекст ниже был найден.\n\n"
+        f"RAG-контекст:\n{formatted_contexts}\n\n"
+        f"Вопрос пользователя:\n{request.message}"
+    )
+
+    return await _run_agent_message(
+        message=agent_message,
+        thread_id=request.thread_id,
+        contexts=contexts,
+    )
 
 
 @app.post("/api/agent/chat")
@@ -155,6 +185,12 @@ async def legacy_chat(request: ChatRequest):
     return await _guarded_chat(request)
 
 
+@app.post("/api/v1/rag/chat")
+async def rag_chat(request: RAGChatRequest):
+    return await _guarded_rag_chat(request)
+
+
+@app.post("/chat/v1/documents/upload", response_model=DocumentIngestResponse)
 @app.post("/api/v1/documents/upload", response_model=DocumentIngestResponse)
 async def upload_document(
     file: UploadFile = File(...),
