@@ -29,6 +29,22 @@ def test_chat_v1_document_upload_endpoint_accepts_file() -> None:
         app.dependency_overrides.clear()
 
     assert response.status_code == 200
-    assert response.json() == {"filename": "notes.txt", "chunks_indexed": 1}
+    payload = response.json()
+    assert payload["filename"] == "notes.txt"
+    assert payload["status"] == "queued"
+    assert payload["document_id"]
     assert fake_service.filename == "notes.txt"
     assert fake_service.content == b"hello rag"
+
+    status_response = client.get(
+        f"/api/v1/documents/{payload['document_id']}/status",
+    )
+    assert status_response.status_code == 200
+    assert status_response.json() == {
+        "document_id": payload["document_id"],
+        "filename": "notes.txt",
+        "status": "indexed",
+        "chunks_indexed": 1,
+        "error": None,
+        "message": None,
+    }

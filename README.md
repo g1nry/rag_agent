@@ -232,8 +232,9 @@ print(response.json()["answer"])
 | POST  | `/api/v1/chat`         | Обычный чат без RAG-поиска            | `{"answer": "...", "contexts": []}` |
 | POST  | `/api/v1/rag/chat`     | Чат по загруженным документам без tools | `{"answer": "...", "contexts": [...]}` |
 | POST  | `/api/agent/chat`      | Агент с инструментами                 | `{"answer": "...", "contexts": []}` |
-| POST  | `/chat/v1/documents/upload` | Загрузка документа в RAG         | `{"filename": "...", "chunks_indexed": 18}` |
-| POST  | `/api/v1/documents/upload` | Совместимый путь загрузки документа | `{"filename": "...", "chunks_indexed": 18}` |
+| POST  | `/chat/v1/documents/upload` | Поставить документ в очередь индексации | `{"document_id": "...", "filename": "...", "status": "queued"}` |
+| POST  | `/api/v1/documents/upload` | Совместимый путь загрузки документа | `{"document_id": "...", "filename": "...", "status": "queued"}` |
+| GET   | `/api/v1/documents/{document_id}/status` | Статус индексации документа | `{"status": "indexed", "chunks_indexed": 18}` |
 
 ---
 
@@ -262,8 +263,28 @@ curl -X POST http://localhost:8000/api/v1/documents/upload \
 
 ```json
 {
+  "document_id": "2e9f7a24-9c73-42a7-9c1e-7ef9e20c2a1a",
   "filename": "README.md",
-  "chunks_indexed": 20
+  "status": "queued"
+}
+```
+
+Проверь статус индексации перед вопросами по документу:
+
+```bash
+curl http://localhost:8000/api/v1/documents/2e9f7a24-9c73-42a7-9c1e-7ef9e20c2a1a/status
+```
+
+Готовый документ выглядит так:
+
+```json
+{
+  "document_id": "2e9f7a24-9c73-42a7-9c1e-7ef9e20c2a1a",
+  "filename": "README.md",
+  "status": "indexed",
+  "chunks_indexed": 20,
+  "error": null,
+  "message": null
 }
 ```
 

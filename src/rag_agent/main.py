@@ -1,12 +1,14 @@
 from contextlib import asynccontextmanager
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from uuid import uuid4
+
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from fastapi.responses import HTMLResponse
 import logging
 
 from .agents import red_team_agent
 from .core.config import get_settings
-from .domain.schemas import DocumentIngestResponse
+from .domain.schemas import DocumentStatusResponse, DocumentUploadResponse
 from .services.retrieval_service import retrieval_service
 from .integrations.ollama.client import OllamaClient
 from .guardrails.guardrails import check_message_guardrails, check_output_guardrails
@@ -28,6 +30,7 @@ document_ingestion_service = DocumentIngestionService(
     vector_store=JsonVectorStore(settings.index_path),
     llm_service=rag_llm_service,
 )
+document_ingestion_jobs: dict[str, DocumentStatusResponse] = {}
 
 
 class ChatRequest(BaseModel):
@@ -41,6 +44,60 @@ class RAGChatRequest(ChatRequest):
 
 def get_document_ingestion_service() -> DocumentIngestionService:
     return document_ingestion_service
+
+
+def _set_document_status(status: DocumentStatusResponse) -> None:
+    document_ingestion_jobs[status.document_id] = status
+
+
+async def _run_document_ingestion_job(
+    document_id: str,
+    filename: str,
+    content: bytes,
+    ingestion_service: DocumentIngestionService,
+) -> None:
+    _set_document_status(
+        DocumentStatusResponse(
+            document_id=document_id,
+            filename=filename,
+            status="indexing",
+        )
+    )
+
+    try:
+        result = await ingestion_service.ingest_document(filename, content)
+    except DocumentIngestionError as exc:
+        _set_document_status(
+            DocumentStatusResponse(
+                document_id=document_id,
+                filename=filename,
+                status="failed",
+                error=exc.error_code,
+                message=exc.detail,
+            )
+        )
+        return
+    except Exception as exc:
+        logger.exception("Document ingestion job failed")
+        _set_document_status(
+            DocumentStatusResponse(
+                document_id=document_id,
+                filename=filename,
+                status="failed",
+                error="document_ingestion_failed",
+                message=str(exc),
+            )
+        )
+        return
+
+    _set_document_status(
+        DocumentStatusResponse(
+            document_id=document_id,
+            filename=result.filename,
+            status="indexed",
+            chunks_indexed=result.chunks_indexed,
+        )
+    )
 
 
 @asynccontextmanager
@@ -201,24 +258,51 @@ async def rag_chat(request: RAGChatRequest):
     return await _guarded_rag_chat(request)
 
 
-@app.post("/chat/v1/documents/upload", response_model=DocumentIngestResponse)
-@app.post("/api/v1/documents/upload", response_model=DocumentIngestResponse)
+@app.post("/chat/v1/documents/upload", response_model=DocumentUploadResponse)
+@app.post("/api/v1/documents/upload", response_model=DocumentUploadResponse)
 async def upload_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     ingestion_service: DocumentIngestionService = Depends(get_document_ingestion_service),
 ):
     content = await file.read()
+    filename = file.filename or "document.txt"
+    document_id = str(uuid4())
 
-    try:
-        return await ingestion_service.ingest_document(file.filename or "document.txt", content)
-    except DocumentIngestionError as exc:
+    _set_document_status(
+        DocumentStatusResponse(
+            document_id=document_id,
+            filename=filename,
+            status="queued",
+        )
+    )
+    background_tasks.add_task(
+        _run_document_ingestion_job,
+        document_id,
+        filename,
+        content,
+        ingestion_service,
+    )
+
+    return DocumentUploadResponse(
+        document_id=document_id,
+        filename=filename,
+        status="queued",
+    )
+
+
+@app.get("/api/v1/documents/{document_id}/status", response_model=DocumentStatusResponse)
+async def document_status(document_id: str):
+    status = document_ingestion_jobs.get(document_id)
+    if status is None:
         raise HTTPException(
-            status_code=exc.status_code,
+            status_code=404,
             detail={
-                "error": exc.error_code,
-                "message": exc.detail,
+                "error": "document_job_not_found",
+                "message": f"Document ingestion job '{document_id}' was not found.",
             },
-        ) from exc
+        )
+    return status
 
 
 @app.get("/health")
