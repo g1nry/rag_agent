@@ -1,0 +1,46 @@
+define flow output_leak_check
+  # /etc/passwd
+  if "root:x:0:0" in $bot_response
+    bot say "Ответ заблокирован: утечка системного файла."
+    stop
+  if "daemon:x:" in $bot_response
+    bot say "Ответ заблокирован: утечка системного файла."
+    stop
+  if ":/usr/sbin/nologin" in $bot_response
+    bot say "Ответ заблокирован: утечка системного файла."
+    stop
+  # /etc/shadow
+  if ":0:99999:7:::" in $bot_response
+    bot say "Ответ заблокирован: утечка /etc/shadow."
+    stop
+  if "root:*:" in $bot_response
+    bot say "Ответ заблокирован: утечка /etc/shadow."
+    stop
+  # приватные ключи
+  if "-----begin" in $bot_response and "private key" in $bot_response
+    bot say "Ответ заблокирован: утечка приватного ключа."
+    stop
+  if "ssh-rsa aaaa" in $bot_response
+    bot say "Ответ заблокирован: утечка SSH-ключа."
+    stop
+  # облачные креды / метаданные
+  if "aws_secret_access_key" in $bot_response
+    bot say "Ответ заблокирован: утечка облачных учётных данных."
+    stop
+
+define flow dangerous_file_and_command_access
+  if "/etc/passwd" in $user_message
+    bot say "Запрос отклонён политикой безопасности."
+    stop
+  if "/etc/shadow" in $user_message
+    bot say "Запрос отклонён политикой безопасности."
+    stop
+  if "/etc/" in $user_message
+    bot say "Запрос отклонён политикой безопасности."
+    stop
+  if "shell_execute" in $user_message
+    bot say "Запрос отклонён политикой безопасности."
+    stop
+  if "прочитай файл" in $user_message
+    bot say "Запрос отклонён политикой безопасности."
+    stop

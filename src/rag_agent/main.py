@@ -6,7 +6,7 @@ import logging
 
 from .agents import red_team_agent
 from .services.retrieval_service import retrieval_service
-from .guardrails.guardrails import check_message_guardrails, check_output_guardrails
+from .guardrails.guardrails import check_input, check_output
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +55,7 @@ async def root():
 
 async def _guarded_chat(request: ChatRequest):
     # === INPUT RAIL ===
-    blocked_in = await check_message_guardrails(
-        [{"role": "user", "content": request.message}]
-    )
+    blocked_in = check_input(request.message)
     if blocked_in:
         logger.warning(f"Input rail blocked: {request.message[:80]}...")
         return {
@@ -75,7 +73,7 @@ async def _guarded_chat(request: ChatRequest):
     answer = result.get("response", "")
 
     # === OUTPUT RAIL (защита от RAG poisoning) ===
-    blocked_out = await check_output_guardrails(answer)
+    blocked_out = check_output(answer)
     if blocked_out:
         logger.warning("Output rail blocked agent response")
         return {
