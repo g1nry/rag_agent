@@ -52,25 +52,37 @@ class VectorStore:
             """)
 
     def _migrate_legacy_json(self):
-        json_path = self.index_path.with_suffix(".json")
-        if not json_path.exists():
-            return
+            json_path = self.index_path.with_suffix(".json")
+            if not json_path.exists():
+                return
 
-        with self._connect() as conn:
-            count = conn.execute("SELECT COUNT(*) FROM vector_records").fetchone()[0]
-            if count > 0:
-                return  # уже есть данные
+            with self._connect() as conn:
+                count = conn.execute("SELECT COUNT(*) FROM vector_records").fetchone()[0]
+                if count > 0:
+                    return
 
-        # Миграция
-        try:
-            with open(json_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            try:
+                with open(json_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
 
-            records = [VectorRecord.model_validate(item) for item in data]
-            self.add_many(records)
-            print(f"[VectorStore] Migrated {len(records)} records from {json_path}")
-        except Exception as e:
-            raise IndexLoadError(f"Failed to migrate legacy JSON: {e}")
+                records = []
+                for item in data:
+                    # Поддержка старого формата без filename и chunk_index
+                    if "filename" not in item:
+                        item["filename"] = item.get("metadata", {}).get("filename", "unknown")
+                    if "chunk_index" not in item:
+                        try:
+                            item["chunk_index"] = int(item["chunk_id"].split(":")[-1])
+                        except:
+                            item["chunk_index"] = 0
+
+                    records.append(VectorRecord.model_validate(item))
+
+                self.add_many(records)
+                logger.info(f"[VectorStore] Migrated {len(records)} records from legacy JSON")
+
+            except Exception as e:
+                raise IndexLoadError(f"Failed to migrate legacy JSON: {e}")
 
     def load(self) -> List[VectorRecord]:
         try:

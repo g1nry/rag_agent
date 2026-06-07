@@ -1,6 +1,7 @@
 from typing import Optional
 import logging
 
+from rag_agent.core.config import get_settings
 from rag_agent.core.config import Settings
 from rag_agent.storage.vector_store import VectorStore, VectorRecord
 from rag_agent.services.llm_service import LLMService
@@ -64,9 +65,9 @@ class RetrievalService:
 
 
 # Создание экземпляра сервиса
-_settings = get_settings()  # нужно импортировать
+_settings = get_settings()
 _vector_store = VectorStore(_settings.index_path)
-_llm_service = LLMService(...)  # зависит от твоей реализации
+_llm_service = LLMService(...)
 
 retrieval_service = RetrievalService(
     settings=_settings,
