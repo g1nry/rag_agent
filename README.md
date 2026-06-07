@@ -225,20 +225,27 @@ print(response.json()["answer"])
 
 ## 8. Основные эндпоинты API
 
-| Метод | URL                    | Для чего                              | Формат ответа                  |
-|-------|------------------------|---------------------------------------|--------------------------------|
-| GET   | `/`                    | Главная страница                      | HTML                           |
-| GET   | `/health`              | Проверка, жив ли сервис               | `{"status": "ok"}`             |
-| POST  | `/api/v1/chat`         | Обычный чат без RAG-поиска            | `{"answer": "...", "contexts": []}` |
-| POST  | `/api/v1/rag/chat`     | Чат по загруженным документам без tools | `{"answer": "...", "contexts": [...]}` |
-| POST  | `/api/agent/chat`      | Агент с инструментами                 | `{"answer": "...", "contexts": []}` |
-| POST  | `/chat/v1/documents/upload` | Поставить документ в очередь индексации | `{"document_id": "...", "filename": "...", "status": "queued"}` |
-| POST  | `/api/v1/documents/upload` | Совместимый путь загрузки документа | `{"document_id": "...", "filename": "...", "status": "queued"}` |
-| GET   | `/api/v1/documents/{document_id}/status` | Статус индексации документа | `{"status": "indexed", "chunks_indexed": 18}` |
+| Метод | Эндпоинт                        | Назначение                                      |
+|-------|---------------------------------|-------------------------------------------------|
+| POST  | `/api/v1/documents/upload`      | Загрузка и индексация документа                 |
+| GET   | `/api/v1/documents`             | Список всех загруженных документов              |
+| DELETE| `/api/v1/documents/{filename}`  | Удаление документа из индекса                   |
+| POST  | `/api/v1/chat`                  | Простой RAG (без опасных инструментов)          |
+| POST  | `/api/v1/rag/search`            | Только поиск релевантных чанков                 |
+| POST  | `/api/agent/chat`               | Полноценный ReAct-агент с инструментами         |
+| GET   | `/health`                       | Проверка состояния                              |
 
 ---
 
-## 9. Примеры запросов (curl)
+## 9. Хранилище
+
+- **Vector Store**: SQLite (`VectorStore`)
+- Поддержка миграции со старого JSON-индекса
+- Удобные методы: `get_documents()`, `delete_document()`, `replace_document()`
+
+---
+
+## 10. Примеры запросов (curl)
 
 ### Пример 1: Обычный вопрос
 
@@ -256,8 +263,7 @@ curl -X POST http://localhost:8000/api/v1/rag/chat \
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/documents/upload \
-  -F "file=@README.md;type=text/markdown"
-```
+  -F "file=@./README.md"
 
 Ответ:
 
@@ -336,7 +342,7 @@ curl -X POST http://localhost:8000/api/agent/chat \
 
 ---
 
-## 10. Структура проекта
+## 11. Структура проекта
 
 ```
 rag_agent/
@@ -352,10 +358,12 @@ rag_agent/
 │       │   ├── hitl.py
 │       │   └── permission.py
 │       ├── services/         # RAG и LLM
+│       |   ├── document_ingestion_service.py
 │       │   ├── retrieval_service.py
 │       │   └── llm_service.py
 │       ├── storage/          # Хранилище индекса
-│       │   └── vector_store.py
+│       │   ├── vector_store.py
+│       |   └── document_store.py
 │       ├── tools/            # Опасные инструменты
 │       │   ├── base.py
 │       │   ├── dangerous_tools.py
@@ -374,7 +382,7 @@ rag_agent/
 
 ---
 
-## 11. Конфигурация (config.toml)
+## 12. Конфигурация (config.toml)
 
 ### Основные секции:
 
@@ -413,7 +421,7 @@ min_retrieval_score = 0.2
 
 ---
 
-## 12. Как работает агент (просто)
+## 13. Как работает агент (просто)
 
 1. **Ты пишешь сообщение**
 2. **Агент думает** (LLM решает, нужно ли использовать инструменты)
@@ -426,7 +434,7 @@ min_retrieval_score = 0.2
 
 ---
 
-## 13. Опасные инструменты (подробно)
+## 14. Опасные инструменты (подробно)
 
 ### `shell_execute`
 Выполняет любую команду в терминале.
@@ -482,7 +490,7 @@ min_retrieval_score = 0.2
 
 ---
 
-## 14. Возможные ошибки и как их исправить
+## 15. Возможные ошибки и как их исправить
 
 ### Ошибка 1: Модель отвечает на китайском
 
@@ -510,7 +518,7 @@ ollama serve
 
 ---
 
-## 15. Docker (контейнеризация)
+## 16. Docker (контейнеризация)
 
 ### docker-compose.yml (актуальный)
 
@@ -539,7 +547,7 @@ docker compose up --build
 
 ---
 
-## 16. Часто задаваемые вопросы
+## 17. Часто задаваемые вопросы
 
 **Q: Можно ли использовать модель из OpenAI вместо Ollama?**  
 A: Пока нет. Поддерживается только Ollama.
@@ -561,7 +569,7 @@ A: Это уже реализовано в `security/hitl.py`. Нужно под
 
 ---
 
-## 17. Roadmap (что будет дальше)
+## 18. Roadmap (что будет дальше)
 
 - [x] ReAct-агент с 6 инструментами
 - [x] RAG + агент в одном
