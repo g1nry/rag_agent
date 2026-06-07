@@ -63,14 +63,3 @@ class RetrievalService:
             logger.error(f"Retrieval error: {e}")
             return {"contexts": []}
 
-
-# Создание экземпляра сервиса
-_settings = get_settings()
-_vector_store = VectorStore(_settings.index_path)
-_llm_service = LLMService(...)
-
-retrieval_service = RetrievalService(
-    settings=_settings,
-    vector_store=_vector_store,
-    llm_service=_llm_service,
-)
