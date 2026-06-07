@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
 from fastapi.responses import HTMLResponse
@@ -6,6 +6,7 @@ import logging
 
 from .agents import red_team_agent
 from .services.retrieval_service import retrieval_service
+from .services.document_ingestion_service import DocumentIngestionService
 from .storage.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,9 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Создаём экземпляр сервиса загрузки
+ingestion_service = DocumentIngestionService()
+
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
@@ -47,24 +51,58 @@ async def root():
     """
 
 
-# ==================== ПРОСТОЙ RAG ====================
+# ==================== ЗАГРУЗКА ДОКУМЕНТОВ ====================
+@app.post("/api/v1/documents/upload")
+async def upload_document(file: UploadFile = File(...)):
+    """Загрузка и индексация документа"""
+    try:
+        content = await file.read()
+        result = await ingestion_service.ingest_document(
+            filename=file.filename,
+            content=content
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Upload error: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ==================== УПРАВЛЕНИЕ ДОКУМЕНТАМИ ====================
+@app.get("/api/v1/documents")
+async def list_documents():
+    try:
+        docs = red_team_agent.vector_store.get_documents() if hasattr(red_team_agent, 'vector_store') else []
+        return {"documents": docs}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/v1/documents/{filename}")
+async def delete_document(filename: str):
+    try:
+        success = red_team_agent.vector_store.delete_document(filename) if hasattr(red_team_agent, 'vector_store') else False
+        if success:
+            return {"status": "deleted", "filename": filename}
+        raise HTTPException(status_code=404, detail="Документ не найден")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== RAG ====================
 @app.post("/api/v1/chat")
 async def simple_rag_chat(request: ChatRequest):
-    """Простой RAG без опасных инструментов"""
     if not request.use_rag or not retrieval_service:
         result = await red_team_agent.llm.ainvoke(request.message)
         return {"answer": result.content, "contexts": []}
 
-    retrieval_result = await retrieval_service.retrieve_context(
-        request.message, top_k=request.top_k
-    )
+    retrieval_result = await retrieval_service.retrieve_context(request.message, top_k=request.top_k)
     contexts = retrieval_result.get("contexts", []) if isinstance(retrieval_result, dict) else []
 
     if not contexts:
         return {"answer": "Релевантная информация не найдена.", "contexts": []}
 
     context_text = "\n\n".join([f"[{i+1}] {c.get('text', '')}" for i, c in enumerate(contexts)])
-    prompt = f"""Используй только предоставленный контекст.\n\n{context_text}\n\nВопрос: {request.message}\n\nОтвет:"""
+    prompt = f"Используй только предоставленный контекст.\n\n{context_text}\n\nВопрос: {request.message}\n\nОтвет:"
 
     llm_result = await red_team_agent.llm.ainvoke(prompt)
     return {"answer": llm_result.content, "contexts": contexts}
@@ -72,7 +110,6 @@ async def simple_rag_chat(request: ChatRequest):
 
 @app.post("/api/v1/rag/search")
 async def rag_search(request: ChatRequest):
-    """Только retrieval"""
     if not retrieval_service:
         return {"contexts": []}
     result = await retrieval_service.retrieve_context(request.message, top_k=request.top_k)
@@ -84,40 +121,6 @@ async def rag_search(request: ChatRequest):
 async def agent_chat(request: ChatRequest):
     result = await red_team_agent.ainvoke(message=request.message, thread_id=request.thread_id)
     return {"answer": result.get("response", ""), "contexts": []}
-
-
-# ==================== УПРАВЛЕНИЕ ДОКУМЕНТАМИ ====================
-@app.get("/api/v1/documents")
-async def list_documents():
-    """Список всех загруженных документов"""
-    try:
-        docs = red_team_agent.vector_store.get_documents() if hasattr(red_team_agent, 'vector_store') else []
-        return {"documents": docs}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/v1/documents/{filename}")
-async def get_document_info(filename: str):
-    """Информация о конкретном документе"""
-    try:
-        exists = red_team_agent.vector_store.document_exists(filename) if hasattr(red_team_agent, 'vector_store') else False
-        return {"filename": filename, "exists": exists}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.delete("/api/v1/documents/{filename}")
-async def delete_document(filename: str):
-    """Удаление документа из индекса"""
-    try:
-        success = red_team_agent.vector_store.delete_document(filename) if hasattr(red_team_agent, 'vector_store') else False
-        if success:
-            return {"status": "deleted", "filename": filename}
-        else:
-            raise HTTPException(status_code=404, detail="Документ не найден")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/health")
