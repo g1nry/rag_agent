@@ -46,36 +46,61 @@ async def root():
     """
 
 
-# ==================== ПРОСТОЙ RAG ====================
+# ==================== ПРОСТОЙ RAG (без tools) ====================
 @app.post("/api/v1/chat")
 async def simple_rag_chat(request: ChatRequest):
-    """Простой RAG без инструментов (для обычных вопросов по документам)"""
+    """Простой RAG-chain: retrieve → prompt with context → LLM answer"""
     if not request.use_rag or not retrieval_service:
-        # Если RAG выключен — просто отвечаем через LLM
+        # Fallback без RAG
         result = await red_team_agent.llm.ainvoke(request.message) if hasattr(red_team_agent, 'llm') else {"content": "RAG отключен"}
-        return {"answer": result.content if hasattr(result, 'content') else str(result), "contexts": []}
+        return {"answer": getattr(result, 'content', str(result)), "contexts": []}
 
-    # Нормальный RAG flow
-    contexts = await retrieval_service.retrieve_context(request.message, top_k=request.top_k)
+    # Получаем контексты
+    retrieval_result = await retrieval_service.retrieve_context(
+        request.message, 
+        top_k=request.top_k
+    )
     
-    # Здесь можно добавить промпт с контекстами, но пока возвращаем просто
-    # (в будущем можно сделать отдельный RAGService для генерации)
+    contexts = retrieval_result.get("contexts", []) if isinstance(retrieval_result, dict) else []
+    
+    if not contexts:
+        answer = "Не удалось найти релевантную информацию в документах."
+    else:
+        # Формируем промпт с контекстом
+        context_text = "\n\n".join([f"Документ {i+1}:\n{c.get('content', c.get('text', ''))}" 
+                                  for i, c in enumerate(contexts)])
+        
+        prompt = f"""Используй только предоставленный контекст для ответа.
+Отвечай на русском языке.
+
+Контекст:
+{context_text}
+
+Вопрос: {request.message}
+
+Ответ:"""
+
+        # Вызываем LLM напрямую
+        llm_result = await red_team_agent.llm.ainvoke(prompt)
+        answer = getattr(llm_result, 'content', str(llm_result))
+
     return {
-        "answer": "Ответ на основе RAG (пока заглушка, будет доработано)",
-        "contexts": contexts.get("contexts", []) if isinstance(contexts, dict) else []
+        "answer": answer,
+        "contexts": contexts
     }
 
 
+# ==================== ТОЛЬКО RETRIEVAL ====================
 @app.post("/api/v1/rag/search")
 async def rag_search(request: ChatRequest):
-    """Только retrieval — возвращает релевантные чанки"""
+    """Только поиск по документам"""
     if not retrieval_service:
         return {"contexts": []}
     
     result = await retrieval_service.retrieve_context(request.message, top_k=request.top_k)
-    return {
-        "contexts": result.get("contexts", []) if isinstance(result, dict) else []
-    }
+    contexts = result.get("contexts", []) if isinstance(result, dict) else []
+    
+    return {"contexts": contexts}
 
 
 # ==================== ReAct АГЕНТ ====================
