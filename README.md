@@ -206,7 +206,7 @@ curl -X POST http://localhost:8000/api/v1/chat \
 - `message` — текст вопроса или команды.
 - `thread_id` — идентификатор диалога, по умолчанию `"default"`.
 
-Для вопросов по загруженным документам используй `/api/v1/rag/chat`. Там дополнительно есть `top_k` — сколько фрагментов из RAG-индекса взять в контекст. Этот endpoint отвечает напрямую по RAG-контексту и не запускает агента с инструментами.
+Для вопросов по загруженным документам используй `/api/v1/rag/search` (или alias `/api/v1/rag/chat`). Там дополнительно есть `top_k` — сколько фрагментов из RAG-индекса взять в контекст. Эти endpoint`ы отвечают напрямую по RAG-контексту и не запускают агента с инструментами.
 
 ### Через Python (для интеграции)
 
@@ -232,8 +232,11 @@ print(response.json()["answer"])
 | DELETE| `/api/v1/documents/{filename}`  | Удаление документа из индекса                   |
 | POST  | `/api/v1/chat`                  | Простой RAG (без опасных инструментов)          |
 | POST  | `/api/v1/rag/search`            | Только поиск релевантных чанков                 |
+| POST  | `/api/v1/rag/chat`              | Простой RAG alias для поиска по документам      |
 | POST  | `/api/agent/chat`               | Полноценный ReAct-агент с инструментами         |
 | GET   | `/health`                       | Проверка состояния                              |
+
+> Важно: `/api/v1/documents` возвращает только уже полностью проиндексированные документы. Если документ только что загружен и ещё находится в статусе `queued`, подождите завершения индексации по `/api/v1/documents/{document_id}/status`.
 
 ---
 
@@ -247,10 +250,10 @@ print(response.json()["answer"])
 
 ## 10. Примеры запросов (curl)
 
-### Пример 1: Обычный вопрос
+### Пример 1: RAG-вопрос
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/rag/chat \
+curl -X POST http://localhost:8000/api/v1/rag/search \
   -H "Content-Type: application/json" \
   -d '{
     "message": "О чем этот проект? Ответь на основе README.md",
@@ -294,7 +297,7 @@ curl http://localhost:8000/api/v1/documents/2e9f7a24-9c73-42a7-9c1e-7ef9e20c2a1a
 }
 ```
 
-`rag_search` — это внутренний инструмент `/api/agent/chat` для поиска по документам, загруженным через `/chat/v1/documents/upload`. Обычный RAG endpoint `/api/v1/rag/chat` не вызывает agent tools и не должен упоминать `rag_search`; он сначала достает контекст из индекса, затем напрямую просит LLM ответить по найденным фрагментам.
+`rag_search` — это внутренний инструмент `/api/agent/chat` для поиска по документам, загруженным через `/chat/v1/documents/upload`. Обычные RAG endpoints `/api/v1/rag/chat` и `/api/v1/rag/search` не вызывают agent tools и не должны упоминать `rag_search`; они сначала достают контекст из индекса, затем напрямую просят LLM ответить по найденным фрагментам.
 
 ### Пример 3: Выполнение команды
 

@@ -147,7 +147,7 @@ async def get_document_status(document_id: str):
 @app.get("/api/v1/documents")
 async def list_documents():
     try:
-        docs = red_team_agent.vector_store.get_documents() if hasattr(red_team_agent, 'vector_store') else []
+        docs = retrieval_service._vector_store.get_documents() if retrieval_service and hasattr(retrieval_service, '_vector_store') else []
         return {"documents": docs}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -156,7 +156,7 @@ async def list_documents():
 @app.delete("/api/v1/documents/{filename}")
 async def delete_document(filename: str):
     try:
-        success = red_team_agent.vector_store.delete_document(filename) if hasattr(red_team_agent, 'vector_store') else False
+        success = retrieval_service._vector_store.delete_document(filename) if retrieval_service and hasattr(retrieval_service, '_vector_store') else False
         if success:
             return {"status": "deleted", "filename": filename}
         raise HTTPException(status_code=404, detail="Документ не найден")
@@ -167,6 +167,9 @@ async def delete_document(filename: str):
 # ==================== RAG ====================
 @app.post("/api/v1/chat")
 async def simple_rag_chat(request: ChatRequest):
+    if not red_team_agent.initialized:
+        await red_team_agent.initialize(retrieval_service=retrieval_service)
+
     if not request.use_rag or not retrieval_service:
         result = await red_team_agent.llm.ainvoke(request.message)
         return {"answer": result.content, "contexts": []}
@@ -185,6 +188,7 @@ async def simple_rag_chat(request: ChatRequest):
 
 
 @app.post("/api/v1/rag/search")
+@app.post("/api/v1/rag/chat")
 async def rag_search(request: ChatRequest):
     if not retrieval_service:
         return {"contexts": []}
