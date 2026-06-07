@@ -1,15 +1,66 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks, Depends
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
 from fastapi.responses import HTMLResponse
 import logging
+import uuid
 
 from .agents import red_team_agent
+from .core.config import get_settings
+from .integrations.ollama.client import OllamaClient
+from .services.llm_service import LLMService
 from .services.retrieval_service import retrieval_service
 from .services.document_ingestion_service import DocumentIngestionService
-from .storage.vector_store import VectorStore
+from .storage.document_store import DocumentStore
+from .storage.vector_store import JsonVectorStore, VectorStore
 
 logger = logging.getLogger(__name__)
+
+_settings = get_settings()
+_ollama_client = OllamaClient(str(_settings.ollama_base_url))
+_llm_service = LLMService(client=_ollama_client, settings=_settings)
+_document_store = DocumentStore(_settings.documents_dir)
+_vector_store = JsonVectorStore(_settings.index_path)
+
+# Создаём экземпляр сервиса загрузки
+ingestion_service = DocumentIngestionService(
+    settings=_settings,
+    document_store=_document_store,
+    vector_store=_vector_store,
+    llm_service=_llm_service,
+)
+
+document_status_store: dict[str, dict] = {}
+
+def get_document_ingestion_service() -> DocumentIngestionService:
+    return ingestion_service
+
+async def _process_document_ingestion(
+    document_id: str,
+    filename: str,
+    content: bytes,
+    service: DocumentIngestionService,
+):
+    document_status_store[document_id] = {
+        "document_id": document_id,
+        "filename": filename,
+        "status": "indexing",
+        "chunks_indexed": None,
+        "error": None,
+        "message": None,
+    }
+    try:
+        result = await service.ingest_document(filename=filename, content=content)
+        document_status_store[document_id].update(
+            status="indexed",
+            chunks_indexed=result.chunks_indexed,
+        )
+    except Exception as exc:
+        document_status_store[document_id].update(
+            status="failed",
+            error=str(exc),
+            message=getattr(exc, "detail", str(exc)),
+        )
 
 
 class ChatRequest(BaseModel):
@@ -34,10 +85,6 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Создаём экземпляр сервиса загрузки
-ingestion_service = DocumentIngestionService()
-
-
 @app.get("/", response_class=HTMLResponse)
 async def root():
     return """
@@ -53,18 +100,47 @@ async def root():
 
 # ==================== ЗАГРУЗКА ДОКУМЕНТОВ ====================
 @app.post("/api/v1/documents/upload")
-async def upload_document(file: UploadFile = File(...)):
+@app.post("/chat/v1/documents/upload")
+async def upload_document(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    ingestion_service: DocumentIngestionService = Depends(get_document_ingestion_service),
+):
     """Загрузка и индексация документа"""
     try:
         content = await file.read()
-        result = await ingestion_service.ingest_document(
-            filename=file.filename,
-            content=content
+        document_id = str(uuid.uuid4())
+        document_status_store[document_id] = {
+            "document_id": document_id,
+            "filename": file.filename,
+            "status": "queued",
+            "chunks_indexed": None,
+            "error": None,
+            "message": None,
+        }
+        background_tasks.add_task(
+            _process_document_ingestion,
+            document_id,
+            file.filename,
+            content,
+            ingestion_service,
         )
-        return result
+        return {
+            "document_id": document_id,
+            "filename": file.filename,
+            "status": "queued",
+        }
     except Exception as e:
         logger.error(f"Upload error: {e}")
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/v1/documents/{document_id}/status")
+async def get_document_status(document_id: str):
+    status = document_status_store.get(document_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return status
 
 
 # ==================== УПРАВЛЕНИЕ ДОКУМЕНТАМИ ====================
@@ -96,7 +172,7 @@ async def simple_rag_chat(request: ChatRequest):
         return {"answer": result.content, "contexts": []}
 
     retrieval_result = await retrieval_service.retrieve_context(request.message, top_k=request.top_k)
-    contexts = retrieval_result.get("contexts", []) if isinstance(retrieval_result, dict) else []
+    contexts = retrieval_result.contexts if hasattr(retrieval_result, "contexts") else []
 
     if not contexts:
         return {"answer": "Релевантная информация не найдена.", "contexts": []}
@@ -113,7 +189,7 @@ async def rag_search(request: ChatRequest):
     if not retrieval_service:
         return {"contexts": []}
     result = await retrieval_service.retrieve_context(request.message, top_k=request.top_k)
-    return {"contexts": result.get("contexts", []) if isinstance(result, dict) else []}
+    return {"contexts": result.contexts if hasattr(result, "contexts") else []}
 
 
 # ==================== ReAct АГЕНТ ====================

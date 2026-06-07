@@ -7,7 +7,7 @@ name = "rag-agent"
 version = "0.1.0"
 description = "Minimal backend service for agent and RAG with Ollama integration."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
     "fastapi",
     "uvicorn",

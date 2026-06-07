@@ -3,6 +3,7 @@ import logging
 
 from rag_agent.core.config import get_settings
 from rag_agent.core.config import Settings
+from rag_agent.domain.schemas import RetrievalResult
 from rag_agent.storage.vector_store import VectorStore, VectorRecord
 from rag_agent.services.llm_service import LLMService
 from rag_agent.rag.retriever import cosine_similarity
@@ -26,13 +27,13 @@ class RetrievalService:
         result = await self.retrieve_context(payload.query, payload.top_k)
         return {"contexts": result.get("contexts", [])}
 
-    async def retrieve_context(self, query: str, top_k: Optional[int] = None) -> dict:
+    async def retrieve_context(self, query: str, top_k: Optional[int] = None) -> RetrievalResult:
         try:
             query_embedding = await self._llm_service.embed(query)
             records = self._vector_store.load()
 
             if not records:
-                return {"contexts": []}
+                return RetrievalResult(contexts=[])
 
             scored = []
             for record in records:
@@ -58,11 +59,34 @@ class RetrievalService:
                     "score": round(score, 4),
                 })
 
-            return {"contexts": contexts}
+            if not contexts:
+                query_lower = query.lower()
+                requested_filename = None
+                for record in records:
+                    filename = record.metadata.get("filename", record.filename)
+                    if filename and filename.lower() in query_lower:
+                        requested_filename = filename
+                        break
+
+                if requested_filename:
+                    file_records = [
+                        record for record in records
+                        if record.metadata.get("filename", record.filename).lower() == requested_filename.lower()
+                    ]
+                    file_records.sort(key=lambda record: record.chunk_index)
+                    for record in file_records[:limit]:
+                        contexts.append({
+                            "text": record.text,
+                            "source": requested_filename,
+                            "chunk_id": record.chunk_id,
+                            "score": 0.0,
+                        })
+
+            return RetrievalResult(contexts=contexts)
 
         except Exception as e:
             logger.error(f"Retrieval error: {e}")
-            return {"contexts": []}
+            return RetrievalResult(contexts=[])
 
 
 _settings = get_settings()

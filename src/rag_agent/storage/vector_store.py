@@ -1,19 +1,35 @@
 import sqlite3
 import json
+import logging
 from pathlib import Path
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 
 from .errors import IndexLoadError, IndexWriteError
+
+logger = logging.getLogger(__name__)
 
 
 class VectorRecord(BaseModel):
     chunk_id: str
-    filename: str
-    chunk_index: int
+    filename: str = Field(default="")
+    chunk_index: int = Field(default=0)
     text: str
     embedding: List[float]
-    metadata: dict
+    metadata: dict = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    def fill_missing_fields(cls, values: dict):
+        metadata = values.get("metadata", {}) or {}
+        if "filename" not in values or not values.get("filename"):
+            values["filename"] = metadata.get("filename", "unknown")
+        if "chunk_index" not in values or values.get("chunk_index") is None:
+            chunk_id = values.get("chunk_id", "")
+            try:
+                values["chunk_index"] = int(chunk_id.split(":")[-1])
+            except Exception:
+                values["chunk_index"] = 0
+        return values
 
 
 class VectorStore:
@@ -21,6 +37,7 @@ class VectorStore:
 
     def __init__(self, index_path: Path):
         self.index_path = self._sqlite_path(index_path)
+        self.index_path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_schema()
         self._migrate_legacy_json()
 
