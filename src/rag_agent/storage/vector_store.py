@@ -141,6 +141,51 @@ class VectorStore:
             return int(record.chunk_id.split(":")[-1])
         except:
             return 0
+    
+    def get_documents(self) -> list[dict]:
+        """Возвращает список всех документов с количеством чанков"""
+        try:
+            with self._connect() as conn:
+                rows = conn.execute("""
+                    SELECT filename, COUNT(*) as chunk_count 
+                    FROM vector_records 
+                    GROUP BY filename 
+                    ORDER BY filename
+                """).fetchall()
+
+            return [
+                {"filename": row["filename"], "chunk_count": row["chunk_count"]}
+                for row in rows
+            ]
+        except Exception as e:
+            logger.error(f"Failed to get documents: {e}")
+            return []
+
+    def delete_document(self, filename: str) -> bool:
+        """Полностью удаляет документ из индекса"""
+        try:
+            with self._connect() as conn:
+                cursor = conn.execute(
+                    "DELETE FROM vector_records WHERE filename = ?", 
+                    (filename,)
+                )
+                conn.commit()
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Failed to delete document {filename}: {e}")
+            return False
+
+    def document_exists(self, filename: str) -> bool:
+        """Проверяет, существует ли документ в индексе"""
+        try:
+            with self._connect() as conn:
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM vector_records WHERE filename = ?", 
+                    (filename,)
+                ).fetchone()[0]
+                return count > 0
+        except:
+            return False
 
 
 # Для обратной совместимости (можно потом убрать)
