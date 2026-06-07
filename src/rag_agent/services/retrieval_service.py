@@ -6,6 +6,7 @@ from rag_agent.core.config import Settings
 from rag_agent.storage.vector_store import VectorStore, VectorRecord
 from rag_agent.services.llm_service import LLMService
 from rag_agent.rag.retriever import cosine_similarity
+from rag_agent.integrations.ollama.client import OllamaClient
 
 logger = logging.getLogger(__name__)
 
@@ -63,3 +64,16 @@ class RetrievalService:
             logger.error(f"Retrieval error: {e}")
             return {"contexts": []}
 
+
+_settings = get_settings()
+
+# Создаём зависимости
+_ollama_client = OllamaClient(str(_settings.ollama_base_url))
+_llm_service = LLMService(client=_ollama_client, settings=_settings)
+_vector_store = VectorStore(_settings.index_path)
+
+retrieval_service = RetrievalService(
+    settings=_settings,
+    vector_store=_vector_store,
+    llm_service=_llm_service,
+)
