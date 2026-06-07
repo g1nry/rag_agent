@@ -1,483 +1,142 @@
-import asyncio
 import logging
-import os
+import re
+from functools import lru_cache
 from pathlib import Path
-from typing import Optional
+from threading import Lock
+from typing import List, Optional, Tuple
 
 log = logging.getLogger(__name__)
 
-_NEMO_RAILS = None
+# Папка с .co файлами. Поправь под свою структуру!
+_CONFIG_DIR = Path(__file__).resolve().parent / "nemo_guardrails"
+
+# Невидимые / zero-width / bidi символы, которыми атакующий разбивает слова
+# (ZWSP, ZWNJ, ZWJ, WORD-JOINER, BOM, SOFT-HYPHEN, LRM/RLM, bidi overrides).
+_ZERO_WIDTH = dict.fromkeys(
+    [
+        0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF, 0x00AD,
+        0x200E, 0x200F, 0x202A, 0x202B, 0x202C, 0x202D, 0x202E,
+    ],
+    None,
+)
 
 
-def _load_nemo_guardrails():
-    global _NEMO_RAILS
-    if _NEMO_RAILS is not None:
-        return _NEMO_RAILS
-
-    try:
-        from nemoguardrails import RailsConfig, LLMRails
-
-        config_path = Path(__file__).resolve().parent / "nemo_guardrails"
-        cfg = RailsConfig.from_path(str(config_path))
-
-        ollama_url = os.environ.get("NEMO_GUARDRAILS_OLLAMA_URL", "http://localhost:11434")
-        for model in cfg.models:
-            if model.engine == "ollama":
-                if model.parameters is None:
-                    model.parameters = {}
-                model.parameters["base_url"] = ollama_url
-
-        _NEMO_RAILS = LLMRails(cfg)
-        log.info(f"NeMo Guardrails loaded (Ollama URL: {ollama_url})")
-        return _NEMO_RAILS
-    except Exception as e:
-        log.warning(f"NeMo Guardrails failed to load, ML checks disabled: {e}")
-        _NEMO_RAILS = False
-        return _NEMO_RAILS
+def _normalize_for_matching(text: str) -> str:
+    if not text:
+        return ""
+    text = text.translate(_ZERO_WIDTH)
+    text = re.sub(r"(?<=\S)\+(?=\S)", "", text)
+    text = re.sub(r'[{}\[\]":,]', " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip().lower()
 
 
-def _extract_user_message(messages: list) -> Optional[str]:
-    for msg in reversed(messages):
-        if not isinstance(msg, dict):
+Rule = Tuple[Tuple[str, ...], str]
+
+_INPUT_RULES: Optional[List[Rule]] = None
+_OUTPUT_RULES: Optional[List[Rule]] = None
+_LOAD_LOCK = Lock()
+
+_IF_RE = re.compile(r'^\s*if\s+.*\bin\s+\$(user_message|bot_response)\b')
+_LITERAL_RE = re.compile(r'"([^"]*)"')
+
+
+def _strip_comment(line: str) -> str:
+    return line.split("#", 1)[0]
+
+
+def _parse_co_file(text: str, input_rules: List[Rule], output_rules: List[Rule]) -> None:
+    lines = text.splitlines()
+    n = len(lines)
+    for i, raw in enumerate(lines):
+        line = _strip_comment(raw)
+        m = _IF_RE.match(line)
+        if not m:
             continue
-        if msg.get("role") != "user":
+        is_output = m.group(1) == "bot_response"
+        literals = [lit.lower() for lit in _LITERAL_RE.findall(line) if lit]
+        if not literals:
             continue
-        content = msg.get("content")
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            parts = [
-                p.get("text", "") for p in content
-                if isinstance(p, dict) and p.get("type") in ("text", "input_text")
-            ]
-            text = " ".join(parts).strip()
-            return text if text else None
+        message: Optional[str] = None
+        for j in range(i + 1, n):
+            body = _strip_comment(lines[j]).strip()
+            if not body:
+                continue
+            if body.startswith("bot say"):
+                mm = _LITERAL_RE.search(body)
+                message = mm.group(1) if mm else ""
+                break
+            if body.startswith("if ") or body.startswith("define "):
+                break
+        if message is None:
+            continue
+        rule: Rule = (tuple(literals), message)
+        (output_rules if is_output else input_rules).append(rule)
+
+
+def _load_rules() -> Tuple[List[Rule], List[Rule]]:
+    global _INPUT_RULES, _OUTPUT_RULES
+    if _INPUT_RULES is not None and _OUTPUT_RULES is not None:
+        return _INPUT_RULES, _OUTPUT_RULES
+    with _LOAD_LOCK:
+        if _INPUT_RULES is not None and _OUTPUT_RULES is not None:
+            return _INPUT_RULES, _OUTPUT_RULES
+        input_rules: List[Rule] = []
+        output_rules: List[Rule] = []
+        try:
+            for co in sorted(_CONFIG_DIR.glob("*.co")):
+                try:
+                    _parse_co_file(co.read_text(encoding="utf-8"), input_rules, output_rules)
+                except Exception as e:
+                    log.warning(f"guardrails: failed to parse {co.name}: {e}")
+            log.info(
+                f"guardrails: loaded {len(input_rules)} input + "
+                f"{len(output_rules)} output rules from {_CONFIG_DIR}"
+            )
+        except Exception as e:
+            log.error(f"guardrails: failed to load .co rules: {e}", exc_info=True)
+        _INPUT_RULES, _OUTPUT_RULES = input_rules, output_rules
+        return _INPUT_RULES, _OUTPUT_RULES
+
+
+@lru_cache(maxsize=8192)
+def _word_boundary_pattern(literal: str):
+    if literal.isascii() and literal.isalnum() and len(literal) <= 4:
+        return re.compile(r"\b" + re.escape(literal) + r"\b")
     return None
 
 
-async def _nemo_check(user_message: str, check_type: str = "input") -> Optional[str]:
-    rails = _load_nemo_guardrails()
-    if rails is False:
+def _literal_present(literal: str, raw: str, norm: str) -> bool:
+    pattern = _word_boundary_pattern(literal)
+    if pattern is not None:
+        return pattern.search(raw) is not None or pattern.search(norm) is not None
+    return (literal in raw) or (literal in norm)
+
+
+def _match_rules(rules: List[Rule], text: str) -> Optional[str]:
+    if not text:
         return None
-
-    try:
-        role = "user" if check_type == "input" else "assistant"
-        res = await asyncio.to_thread(
-            rails.generate,
-            messages=[{"role": role, "content": user_message}],
-            options={"rails": [check_type]},
-        )
-        if hasattr(res, "response") and isinstance(res.response, list) and res.response:
-            content = (
-                res.response[0].get("content")
-                if isinstance(res.response[0], dict)
-                else None
-            )
-        elif isinstance(res, dict):
-            content = res.get("content")
-        else:
-            content = None
-
-        if not isinstance(content, str):
-            return None
-        if content.strip() == user_message.strip():
-            return None
-        return content
-    except Exception as e:
-        log.warning(f"NeMo {check_type} check error: {e}")
-        return None
+    raw = text.lower()
+    norm = _normalize_for_matching(text)
+    for literals, message in rules:
+        if all(_literal_present(lit, raw, norm) for lit in literals):
+            return message
+    return None
 
 
-def _any_in(text: str, words: list) -> bool:
-    return any(w in text for w in words)
+# ── Публичный API (синхронный, framework-agnostic) ──────────────────────────
 
-
-def _keyword_check(user_message: str) -> Optional[str]:
+def check_input(user_message: str) -> Optional[str]:
+    """Вернёт текст-отказ, если запрос нарушает входную политику, иначе None."""
     if not isinstance(user_message, str) or not user_message:
         return None
-
-    lowered = user_message.lower()
-
-    BLOCK_POLICY = (
-        "Я не могу игнорировать правила или инструкции. "
-        "Сформулируй вопрос без попыток обхода политики."
-    )
-    BLOCK_PROMPT = (
-        "Я не раскрываю системные инструкции или скрытые настройки. "
-        "Задай вопрос по теме без запроса внутренних промптов."
-    )
-    BLOCK_RESTRICT = (
-        "Я не могу переключаться в режимы, снимающие ограничения. "
-        "Задай вопрос напрямую."
-    )
-    BLOCK_HARM = (
-        "Запрос отклонён по политике безопасности контента. "
-        "Переформулируй безопасно. / Request blocked under content safety policy."
-    )
-    BLOCK_ILLEGAL = (
-        "Запросы о незаконной деятельности или серьёзном вреде недопустимы. "
-        "/ Requests involving illegal activity or serious harm are not allowed."
-    )
-    BLOCK_PRIVACY = (
-        "Запросы на доксинг, кражу учётных данных или чужие персональные данные недопустимы. "
-        "/ Doxxing, credential theft, or harvesting others' private data is not allowed."
-    )
-    BLOCK_AGENTIC = (
-        "Запросы на выполнение опасных команд или обход защиты инструментов недопустимы. "
-        "/ Dangerous command execution or tool-safety bypass requests are not allowed."
-    )
-
-    prompt_words = [
-        "промт", "промпт", "prompt", "promt",
-        "инструкц", "instruction",
-        "настройк", "конфигурац",
-        "правила", "систем",
-    ]
-    reveal_verbs = [
-        "покажи", "покажы", "раскрой", "расскрой", "расскажи", "раскажи",
-        "напиши", "напишы", "выдай", "скажи", "открой", "повтори",
-        "выведи", "процитируй", "цитируй", "напомни", "дай", "прочти", "прочитай",
-        "reveal", "show", "print", "output", "repeat", "tell",
-        "share", "expose", "leak", "give",
-    ]
-    for verb in reveal_verbs:
-        if verb in lowered:
-            for pw in prompt_words:
-                if pw in lowered:
-                    return BLOCK_PROMPT
-
-    prompt_names = [
-        "системный промт", "системный промпт",
-        "сис промт", "сис промпт", "систем промт", "систем промпт",
-        "свой промт", "свой промпт", "твой промт", "твой промпт",
-        "system prompt", "system promt", "sys prompt", "sys promt",
-        "начальный промт", "начальный промпт",
-        "исходный промт", "исходный промпт",
-        "оригинальный промт", "оригинальный промпт",
-        "текст промт", "текст промпт",
-        "содержимое промт", "содержимое промпт",
-        "hidden prompt", "secret prompt", "secret instructions", "hidden instructions",
-        "base prompt", "underlying prompt", "actual prompt", "real prompt", "true prompt",
-        "initial prompt", "original prompt",
-        "твои правила", "свои правила",
-        "твои настройки", "твою конфигурацию",
-        "какие инструкции", "скрытые инструкц", "внутренние инструкц",
-        "your instructions", "what are your instructions", "what were you told",
-        "what is your prompt", "what's your prompt",
-    ]
-    for name in prompt_names:
-        if name in lowered:
-            return BLOCK_PROMPT
-
-    ignore_triggers = [
-        "ignore previous", "ignore all previous", "disregard previous",
-        "игнорируй", "не обращай внимания на",
-        "забудь все правила", "забудь правила", "отмени правила",
-        "забудь что ты", "забудь кто ты",
-    ]
-    for t in ignore_triggers:
-        if t in lowered:
-            return BLOCK_POLICY
-
-    if "забудь" in lowered and _any_in(lowered, ["промт", "промпт", "инструкц", "правил"]):
-        return BLOCK_POLICY
-
-    restrict_triggers = [
-        "developer mode", "режим разработчика",
-        "dan", "do anything now",
-        "jailbreak",
-        "no restrictions", "without restrictions",
-        "без ограничений", "сними ограничения", "обойди ограничения",
-        "god mode", "unrestricted mode",
-        "roleplay", "role play",
-        "притворись", "ты теперь", "представь что ты", "сделай вид",
-        "bypass", "prompt injection",
-        "activate unrestricted", "enable god mode",
-        "switch to uncensored", "override safety",
-        "disable content filter", "forget your training",
-        "respond as your shadow", "your true self",
-        "act as evil ai", "act as a jailbroken",
-        "режим без цензуры", "ты без правил", "у тебя нет правил",
-        "ты теперь злой", "ты без фильтров",
-        "это симуляция", "это тест игнорируй",
-        "maintenance mode", "debug mode no restrict",
-        "admin mode no filter",
-    ]
-    for t in restrict_triggers:
-        if t in lowered:
-            return BLOCK_RESTRICT
-
-    if ("act as" in lowered or "pretend" in lowered) and (
-        "no restriction" in lowered or "without" in lowered
-    ):
-        return BLOCK_RESTRICT
-
-    harm_phrases = [
-        "how to kill yourself",
-        "how can i kill myself",
-        "suicide method",
-        "how to rape",
-        "child porn",
-        "child pornography",
-        "как покончить с собой",
-        "как изнасиловать",
-        "как убить человека",
-        "how to torture",
-        "how to murder",
-        "я хочу умереть",
-        "как мне себя убить",
-        "как себя убить",
-        "себя убить",
-    ]
-    for p in harm_phrases:
-        if p in lowered:
-            return BLOCK_HARM
-
-    illegal_exact = [
-        "how to make a bomb",
-        "how to build a bomb",
-        "how to synthesize meth",
-        "how to make meth",
-        "credit card fraud",
-        "carding tutorial",
-        "phishing kit",
-        "steal credentials",
-        "как сделать бомбу",
-        "как сделать взрывчатку",
-        "как мне сделать взрывчатку",
-        "кардинг",
-        "как сделать динамит",
-        "рецепт динамита",
-        "как сделать тротил",
-        "тротил рецепт",
-        "гексоген рецепт",
-        "пластид рецепт",
-        "как сделать c4",
-        "нитроглицерин синтез",
-        "аммонал рецепт",
-        "пояс шахида",
-        "взрывной жилет",
-        "suicide vest",
-        "suicide bombing",
-        "car bomb how",
-        "ied assembly",
-        "как заложить бомбу",
-        "заминировать",
-        "terrorist attack how",
-        "bomb attack plan",
-        "sarin synthesis",
-        "vx nerve agent",
-        "novichok synthesis",
-        "chemical weapon how",
-        "nerve agent how",
-        "как сделать зарин",
-        "химическое оружие как",
-        "нервно-паралитическое вещество",
-        "биологическое оружие",
-        "anthrax weaponize",
-        "biological weapon",
-        "dirty bomb how",
-        "dynamite recipe",
-        "dynamite how to make",
-        "tnt synthesis",
-        "rdx synthesis",
-        "mass shooting plan",
-        "school shooting how",
-        "mass casualty how",
-        "lone wolf attack",
-    ]
-    for p in illegal_exact:
-        if p in lowered:
-            return BLOCK_ILLEGAL
-
-    if "ransomware" in lowered and "build" in lowered:
-        return BLOCK_ILLEGAL
-
-    action_words_ru = ["сделать", "синтез", "получить", "рецепт", "взрыв", "как", "купить", "достать", "собрать"]
-    action_words_en = ["make", "build", "synthesize", "recipe", "how", "buy", "get", "create", "construct"]
-
-    explosive_roots_ru = ["взрывчатк", "взрывчаток", "взрывчатой", "взрывчатое"]
-    if _any_in(lowered, explosive_roots_ru) and _any_in(lowered, action_words_ru):
-        return BLOCK_ILLEGAL
-
-    explosive_materials_ru = ["тротил", "гексоген", "аммонал", "пластид", "нитроглицерин", "новичок", "иприт", "tatp", "hmtd", "аммиачная селитра"]
-    if _any_in(lowered, explosive_materials_ru) and _any_in(lowered, action_words_ru):
-        return BLOCK_ILLEGAL
-
-    explosive_materials_en = ["tatp", "hmtd", "rdx", "semtex", "anfo", "nitroglycerin", "ammonium nitrate bomb"]
-    if _any_in(lowered, explosive_materials_en) and _any_in(lowered, action_words_en):
-        return BLOCK_ILLEGAL
-
-    if "динамит" in lowered and _any_in(lowered, ["сделать", "купить", "взорвать", "рецепт", "как", "достать", "синтез"]):
-        return BLOCK_ILLEGAL
-
-    взорвать_variants = ["взорвать", "взовать", "взарвать", "взорват", "взрывать", "взорву", "взорви"]
-    attack_targets_ru = [
-        "здание", "церковь", "школу", "школ", "метро", "мост", "завод", "офис",
-        "машину", "автобус", "поезд", "самолёт", "самолет", "людей",
-        "толпу", "рынок", "кафе", "клуб", "торговый", "станцию",
-        "стадион", "театр", "больницу", "суд", "полицию", "мечеть",
-        "синагогу", "храм", "вокзал", "аэропорт", "электростанцию", "мечет",
-    ]
-    if _any_in(lowered, взорвать_variants) and _any_in(lowered, attack_targets_ru):
-        return BLOCK_ILLEGAL
-
-    if "заложить" in lowered and _any_in(lowered, ["бомбу", "взрывчатку", "мину", "устройство"]):
-        return BLOCK_ILLEGAL
-
-    terrorism_ru = ["теракт план", "совершить теракт", "организовать теракт", "провести теракт", "минировать"]
-    for t in terrorism_ru:
-        if t in lowered:
-            return BLOCK_ILLEGAL
-
-    terrorism_en = [
-        "terrorist attack planning", "bomb attack planning",
-        "vehicle ramming attack", "mass casualty event planning",
-        "attack crowd with vehicle", "soft target attack",
-        "suicide bombing plan", "martyrdom operation",
-    ]
-    for t in terrorism_en:
-        if t in lowered:
-            return BLOCK_ILLEGAL
-
-    cbrn_agents_ru = ["зарин", "новичок", "иприт", "vx газ", "табун", "зоман", "люизит", "рицин", "ботулотоксин", "сибирская язва"]
-    cbrn_action_ru = ["синтез", "сделать", "получить", "как", "рецепт", "купить", "использовать", "применить", "оружие", "атак"]
-    if _any_in(lowered, cbrn_agents_ru) and _any_in(lowered, cbrn_action_ru):
-        return BLOCK_ILLEGAL
-
-    cbrn_exact_ru = ["химическое оружие", "биологическое оружие", "отравляющее вещество дома"]
-    for t in cbrn_exact_ru:
-        if t in lowered:
-            return BLOCK_ILLEGAL
-
-    cbrn_en = [
-        "sarin synthesis", "vx synthesis", "novichok recipe",
-        "nerve agent synthesis", "weaponize anthrax",
-        "biological weapon manufacture", "dirty bomb construct",
-        "chemical attack how", "chlorine gas attack", "mustard gas production",
-        "ricin extraction", "poison gas weapon", "sarin how to",
-        "ricin how to make", "anthrax spores weapon",
-    ]
-    for t in cbrn_en:
-        if t in lowered:
-            return BLOCK_ILLEGAL
-
-    cbrn_agents_en = ["sarin", "vx nerve", "novichok", "tabun", "soman", "ricin", "botulinum toxin"]
-    cbrn_action_en = ["synthesis", "synthesize", "make", "create", "produce", "weapon", "attack", "recipe"]
-    if _any_in(lowered, cbrn_agents_en) and _any_in(lowered, cbrn_action_en):
-        return BLOCK_ILLEGAL
-
-    if "докс" in lowered and "адрес" in lowered:
-        return BLOCK_PRIVACY
-    if "dox" in lowered and "address" in lowered:
-        return BLOCK_PRIVACY
-    if "деанон" in lowered:
-        return BLOCK_PRIVACY
-    if "своттинг" in lowered or "swatting" in lowered:
-        return BLOCK_PRIVACY
-    if "ssn" in lowered and _any_in(lowered, ["find", "lookup", "get", "steal"]):
-        return BLOCK_PRIVACY
-    if "паспортные данные" in lowered and _any_in(lowered, ["найти", "пробить", "украсть"]):
-        return BLOCK_PRIVACY
-
-    agentic_phrases = [
-        "rm -rf /",
-        "run this bash",
-        "execute on the server",
-        "pipe to bash",
-        "удали все файлы на сервере",
-        ":(){ :|:& };:",
-        "dd if=/dev/zero",
-        "mkfs.ext4 /dev/",
-        "wipe disk",
-        "format c:",
-        "del /f /s /q c:\\",
-        "shred -uz /",
-        "vssadmin delete shadows",
-        "wmic shadowcopy delete",
-    ]
-    for p in agentic_phrases:
-        if p in lowered:
-            return BLOCK_AGENTIC
-
-    if "curl" in lowered and _any_in(lowered, ["| bash", "| sh"]):
-        return BLOCK_AGENTIC
-    if "wget" in lowered and _any_in(lowered, ["| bash", "| sh"]):
-        return BLOCK_AGENTIC
-    if "powershell" in lowered and "bypass" in lowered:
-        return BLOCK_AGENTIC
-    if "invoke-expression" in lowered and "downloadstring" in lowered:
-        return BLOCK_AGENTIC
-
-    return None
+    input_rules, _ = _load_rules()
+    return _match_rules(input_rules, user_message)
 
 
-def _keyword_check_output(bot_response: str) -> Optional[str]:
+def check_output(bot_response: str) -> Optional[str]:
+    """Вернёт текст-отказ, если в ответе модели утечка, иначе None."""
     if not isinstance(bot_response, str) or not bot_response:
         return None
-
-    lowered = bot_response.lower()
-
-    BLOCK_OUTPUT = (
-        "Ответ был заблокирован политикой безопасности выходного контента. "
-        "/ The response was blocked by output content safety policy."
-    )
-
-    output_danger_phrases = [
-        "вот как сделать бомбу",
-        "вот рецепт взрывчатки",
-        "вот синтез метамфетамина",
-        "вот как синтезировать",
-        "вот инструкция по суициду",
-        "вот как убить",
-        "вот детальный рецепт",
-        "here is how to make a bomb",
-        "here is the synthesis of",
-        "here is how to synthesize meth",
-        "here is the recipe for explosives",
-        "step 1: acquire ammonium nitrate",
-        "step 1: mix the following chemicals",
-        "step 1: obtain pseudoephedrine",
-        "to make tatp",
-        "to synthesize sarin",
-        "шаг 1: приобретите нитрат аммония",
-        "шаг 1: смешайте следующие химикаты",
-        "шаг 1: получите прекурсоры",
-        "для синтеза метамфетамина вам понадобится",
-        "для изготовления взрывчатки вам понадобится",
-        "инструкция по изготовлению бомбы",
-        "complete guide to making",
-        "detailed instructions for bomb",
-        "full synthesis route for",
-    ]
-
-    for p in output_danger_phrases:
-        if p in lowered:
-            return BLOCK_OUTPUT
-
-    if "rm -rf /" in bot_response and "server" in lowered:
-        return BLOCK_OUTPUT
-    if ":(){ :|:& };:" in bot_response:
-        return BLOCK_OUTPUT
-
-    return None
-
-
-async def check_message_guardrails(messages: list) -> Optional[str]:
-    user_message = _extract_user_message(messages)
-    if not user_message:
-        return None
-
-    blocked = _keyword_check(user_message)
-    if blocked:
-        return blocked
-
-    return await _nemo_check(user_message, check_type="input")
-
-
-async def check_output_guardrails(bot_response: str) -> Optional[str]:
-    blocked = _keyword_check_output(bot_response)
-    if blocked:
-        return blocked
-
-    return await _nemo_check(bot_response, check_type="output")
+    _, output_rules = _load_rules()
+    return _match_rules(output_rules, bot_response)
