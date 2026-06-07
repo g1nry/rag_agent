@@ -26,11 +26,19 @@ class RAGTool(BaseTool):
 
             result = await self.retrieval_service.retrieve_context(query)
             
-            if not result or not result.get("contexts"):
+            if not result or not result.contexts:
                 return "Не удалось найти релевантную информацию по запросу."
 
-            contexts = result["contexts"]
-            formatted = "\n\n".join([f"Документ {i+1}:\n{c['content']}" for i, c in enumerate(contexts)])
+            contexts = result.contexts
+            formatted = "\n\n".join(
+                [
+                    (
+                        f"Документ {index} ({context.source}, {context.chunk_id}):\n"
+                        f"{context.text}"
+                    )
+                    for index, context in enumerate(contexts, start=1)
+                ]
+            )
             
             return f"Найдено {len(contexts)} релевантных фрагментов:\n\n{formatted}"
             
