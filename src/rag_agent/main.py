@@ -7,6 +7,7 @@ import uuid
 
 from .agents import red_team_agent
 from .core.config import get_settings
+from .core.observability import observe, update_trace, langfuse_observation, langchain_config
 from .integrations.ollama.client import OllamaClient
 from .services.llm_service import LLMService
 from .services.retrieval_service import retrieval_service
@@ -166,24 +167,68 @@ async def delete_document(filename: str):
 
 # ==================== RAG ====================
 @app.post("/api/v1/chat")
+@observe(name="rag-chat")
 async def simple_rag_chat(request: ChatRequest):
+    update_trace(
+        name="rag-chat",
+        session_id=request.thread_id,
+        tags=["rag-agent", "rag-chat"],
+        input={"message": request.message, "top_k": request.top_k},
+        metadata={"endpoint": "rag-chat", "use_rag": request.use_rag},
+    )
+
     if not red_team_agent.initialized:
         await red_team_agent.initialize(retrieval_service=retrieval_service)
 
     if not request.use_rag or not retrieval_service:
-        result = await red_team_agent.llm.ainvoke(request.message)
+        result = await red_team_agent.llm.ainvoke(
+            request.message,
+            config=langchain_config(
+                session_id=request.thread_id,
+                tags=["rag-agent", "rag-chat"],
+                metadata={"endpoint": "rag-chat", "use_rag": False},
+            ),
+        )
         return {"answer": result.content, "contexts": []}
 
-    retrieval_result = await retrieval_service.retrieve_context(request.message, top_k=request.top_k)
-    contexts = retrieval_result.contexts if hasattr(retrieval_result, "contexts") else []
+    with langfuse_observation(
+        name="rag-retrieval",
+        as_type="span",
+        input={"query": request.message, "top_k": request.top_k},
+        metadata={"endpoint": "rag-chat"},
+    ) as retrieval_span:
+        retrieval_result = await retrieval_service.retrieve_context(request.message, top_k=request.top_k)
+        contexts = retrieval_result.contexts if hasattr(retrieval_result, "contexts") else []
+
+        if retrieval_span is not None:
+            retrieval_span.update(
+                output={
+                    "context_count": len(contexts),
+                    "contexts": [
+                        {
+                            "source": c.source,
+                            "chunk_id": c.chunk_id,
+                            "text_preview": c.text[:500],
+                        }
+                        for c in contexts
+                    ],
+                }
+            )
 
     if not contexts:
         return {"answer": "Релевантная информация не найдена.", "contexts": []}
 
-    context_text = "\n\n".join([f"[{i+1}] {c.get('text', '')}" for i, c in enumerate(contexts)])
+    context_text = "\n\n".join([f"[{i+1}] {c.text}" for i, c in enumerate(contexts)])
     prompt = f"Используй только предоставленный контекст.\n\n{context_text}\n\nВопрос: {request.message}\n\nОтвет:"
 
-    llm_result = await red_team_agent.llm.ainvoke(prompt)
+    llm_result = await red_team_agent.llm.ainvoke(
+        prompt,
+        config=langchain_config(
+            session_id=request.thread_id,
+            tags=["rag-agent", "rag-chat"],
+            metadata={"endpoint": "rag-chat", "context_count": len(contexts)},
+        ),
+    )
     return {"answer": llm_result.content, "contexts": contexts}
 
 

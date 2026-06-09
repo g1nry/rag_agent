@@ -8,6 +8,7 @@ import logging
 from ..tools.registry import tool_registry
 from ..tools.langchain_adapter import LangChainToolAdapter
 from ..core.config import get_settings
+from ..core.observability import langchain_config
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,14 @@ class RedTeamAgent:
         inputs = {"messages": [HumanMessage(content=message)]}
 
         try:
-            result = await self.graph.ainvoke(inputs)
+            result = await self.graph.ainvoke(
+                inputs,
+                config=langchain_config(
+                    session_id=thread_id,
+                    tags=["rag-agent", "agent-chat"],
+                    metadata={"endpoint": "agent-chat"},
+                ),
+            )
             final_message = result["messages"][-1].content
             return {"response": final_message, "thread_id": thread_id, "success": True}
         except Exception as e:

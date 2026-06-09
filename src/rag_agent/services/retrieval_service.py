@@ -1,5 +1,6 @@
 from typing import Optional
 import logging
+import re
 
 from rag_agent.core.config import get_settings
 from rag_agent.core.config import Settings
@@ -25,7 +26,65 @@ class RetrievalService:
 
     async def search(self, payload) -> dict:
         result = await self.retrieve_context(payload.query, payload.top_k)
-        return {"contexts": result.get("contexts", [])}
+        contexts = result.contexts if hasattr(result, "contexts") else []
+        return {"contexts": contexts}
+
+    def _extract_exact_ids(self, query: str) -> list[str]:
+        """Извлекает точные идентификаторы MITRE ATLAS из запроса пользователя.
+
+        Покрывает форматы вида AML.T0070, AML.T0069.002, AML.CS0031, AML.TA0007.
+        """
+        matches = re.findall(
+            r"\bAML\.(?:T|TA|CS)\d{4}(?:\.\d{3})?\b",
+            query.upper(),
+        )
+        return list(dict.fromkeys(matches))
+
+    def _exact_id_contexts(self, query: str, records: list, limit: int) -> list[dict]:
+        """Точный поиск по техническим ID.
+
+        Vector search плохо ловит точные идентификаторы, поэтому точные
+        совпадения собираем отдельно и ставим перед семантическими.
+        """
+        exact_ids = self._extract_exact_ids(query)
+        if not exact_ids:
+            return []
+
+        def exact_rank(record) -> tuple:
+            text_upper = record.text.upper()
+            # Лучшее совпадение — собственно поле ID чанка.
+            for exact_id in exact_ids:
+                if f"ID: {exact_id}" in text_upper or f"**ID:** `{exact_id}`" in text_upper:
+                    return (0, record.filename, record.chunk_index)
+            # Хорошее совпадение — заголовок техники/кейса.
+            for exact_id in exact_ids:
+                if f"TECHNIQUE: {exact_id}" in text_upper or f"CASE STUDY: {exact_id}" in text_upper:
+                    return (1, record.filename, record.chunk_index)
+            # Слабое совпадение — любое упоминание/ссылка.
+            return (2, record.filename, record.chunk_index)
+
+        matching = [
+            record
+            for record in records
+            if any(exact_id in record.text.upper() for exact_id in exact_ids)
+        ]
+        matching.sort(key=exact_rank)
+
+        contexts: list[dict] = []
+        seen: set = set()
+        for record in matching:
+            if len(contexts) >= limit:
+                break
+            if record.chunk_id in seen:
+                continue
+            contexts.append({
+                "text": record.text,
+                "source": record.metadata.get("filename", record.filename),
+                "chunk_id": record.chunk_id,
+                "score": 1.0,
+            })
+            seen.add(record.chunk_id)
+        return contexts
 
     async def retrieve_context(self, query: str, top_k: Optional[int] = None) -> RetrievalResult:
         try:
@@ -46,9 +105,18 @@ class RetrievalService:
             scored.sort(key=lambda x: x[0], reverse=True)
 
             limit = top_k or self._settings.default_top_k
-            contexts = []
 
-            for score, record in scored[:limit]:
+            # Точные ID идут перед семантическими результатами.
+            contexts = self._exact_id_contexts(query, records, limit)
+            seen_chunk_ids = {c["chunk_id"] for c in contexts}
+
+            for score, record in scored:
+                if len(contexts) >= limit:
+                    break
+
+                if record.chunk_id in seen_chunk_ids:
+                    continue
+
                 if score < self._settings.min_retrieval_score:
                     continue
 
@@ -58,6 +126,7 @@ class RetrievalService:
                     "chunk_id": record.chunk_id,
                     "score": round(score, 4),
                 })
+                seen_chunk_ids.add(record.chunk_id)
 
             if not contexts:
                 query_lower = query.lower()

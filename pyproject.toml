@@ -21,6 +21,7 @@ dependencies = [
     "langsmith",           # для отладки (опционально)
     "httpx",
     "python-multipart",
+    "langfuse>=3,<4",
 ]
 
 [project.optional-dependencies]
