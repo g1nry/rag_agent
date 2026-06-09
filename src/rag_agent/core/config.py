@@ -1,8 +1,12 @@
 import os
-import tomllib
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, model_validator
 

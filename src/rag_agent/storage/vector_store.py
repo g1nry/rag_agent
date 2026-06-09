@@ -1,71 +1,221 @@
+import sqlite3
 import json
-import os
+import logging
 from pathlib import Path
-from typing import Any
+from typing import List, Optional
+from pydantic import BaseModel, Field, model_validator
 
-from pydantic import BaseModel, Field, ValidationError
+from .errors import IndexLoadError, IndexWriteError
 
-from rag_agent.storage.errors import IndexLoadError, IndexWriteError
+logger = logging.getLogger(__name__)
 
 
 class VectorRecord(BaseModel):
     chunk_id: str
+    filename: str = Field(default="")
+    chunk_index: int = Field(default=0)
     text: str
-    embedding: list[float]
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    embedding: List[float]
+    metadata: dict = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    def fill_missing_fields(cls, values: dict):
+        metadata = values.get("metadata", {}) or {}
+        if "filename" not in values or not values.get("filename"):
+            values["filename"] = metadata.get("filename", "unknown")
+        if "chunk_index" not in values or values.get("chunk_index") is None:
+            chunk_id = values.get("chunk_id", "")
+            try:
+                values["chunk_index"] = int(chunk_id.split(":")[-1])
+            except Exception:
+                values["chunk_index"] = 0
+        return values
 
 
-class JsonVectorStore:
-    def __init__(self, index_path: Path) -> None:
-        self._index_path = index_path
-        self._index_path.parent.mkdir(parents=True, exist_ok=True)
-        if not self._index_path.exists():
-            self._index_path.write_text("[]", encoding="utf-8")
+class VectorStore:
+    """SQLite-based vector store with migration from legacy JSON."""
 
-    def load(self) -> list[VectorRecord]:
+    def __init__(self, index_path: Path):
+        self.index_path = self._sqlite_path(index_path)
+        self.index_path.parent.mkdir(parents=True, exist_ok=True)
+        self._ensure_schema()
+        self._migrate_legacy_json()
+
+    def _sqlite_path(self, path: Path) -> Path:
+        if path.suffix == ".json":
+            return path.with_suffix(".sqlite3")
+        return path
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.index_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _ensure_schema(self):
+        with self._connect() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS vector_records (
+                    chunk_id TEXT PRIMARY KEY,
+                    filename TEXT NOT NULL,
+                    chunk_index INTEGER NOT NULL,
+                    text TEXT NOT NULL,
+                    embedding TEXT NOT NULL,
+                    metadata TEXT NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_vector_records_document 
+                ON vector_records(filename, chunk_index)
+            """)
+
+    def _migrate_legacy_json(self):
+            json_path = self.index_path.with_suffix(".json")
+            if not json_path.exists():
+                return
+
+            with self._connect() as conn:
+                count = conn.execute("SELECT COUNT(*) FROM vector_records").fetchone()[0]
+                if count > 0:
+                    return
+
+            try:
+                with open(json_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+
+                records = []
+                for item in data:
+                    # Поддержка старого формата без filename и chunk_index
+                    if "filename" not in item:
+                        item["filename"] = item.get("metadata", {}).get("filename", "unknown")
+                    if "chunk_index" not in item:
+                        try:
+                            item["chunk_index"] = int(item["chunk_id"].split(":")[-1])
+                        except:
+                            item["chunk_index"] = 0
+
+                    records.append(VectorRecord.model_validate(item))
+
+                self.add_many(records)
+                logger.info(f"[VectorStore] Migrated {len(records)} records from legacy JSON")
+
+            except Exception as e:
+                raise IndexLoadError(f"Failed to migrate legacy JSON: {e}")
+
+    def load(self) -> List[VectorRecord]:
         try:
-            if not self._index_path.exists():
-                self._index_path.write_text("[]", encoding="utf-8")
+            with self._connect() as conn:
+                rows = conn.execute("""
+                    SELECT * FROM vector_records 
+                    ORDER BY filename, chunk_index, chunk_id
+                """).fetchall()
 
-            raw_data = json.loads(self._index_path.read_text(encoding="utf-8"))
-            if not isinstance(raw_data, list):
-                raise IndexLoadError("Vector index has an unexpected JSON structure.")
+            records = []
+            for row in rows:
+                records.append(VectorRecord(
+                    chunk_id=row["chunk_id"],
+                    filename=row["filename"],
+                    chunk_index=row["chunk_index"],
+                    text=row["text"],
+                    embedding=json.loads(row["embedding"]),
+                    metadata=json.loads(row["metadata"]),
+                ))
+            return records
+        except Exception as e:
+            raise IndexLoadError(f"Failed to load index: {e}")
 
-            return [VectorRecord.model_validate(item) for item in raw_data]
-        except IndexLoadError:
-            raise
-        except json.JSONDecodeError as exc:
-            raise IndexLoadError("Vector index contains invalid JSON.") from exc
-        except ValidationError as exc:
-            raise IndexLoadError("Vector index contains records in an invalid format.") from exc
-        except OSError as exc:
-            raise IndexLoadError("Vector index could not be read from disk.") from exc
-
-    def add_many(self, records: list[VectorRecord]) -> None:
-        existing = self.load()
-        existing.extend(records)
-        self._write(existing)
-
-    def replace_document(self, filename: str, records: list[VectorRecord]) -> None:
-        existing = self.load()
-        filtered = [
-            record
-            for record in existing
-            if record.metadata.get("filename") != filename
-        ]
-        filtered.extend(records)
-        self._write(filtered)
-
-    def _write(self, records: list[VectorRecord]) -> None:
-        payload = [record.model_dump(mode="json") for record in records]
-        serialized = json.dumps(payload, ensure_ascii=False, indent=2)
-        temp_path = self._index_path.with_suffix(f"{self._index_path.suffix}.tmp")
-
+    def add_many(self, records: List[VectorRecord]):
         try:
-            temp_path.write_text(serialized, encoding="utf-8")
-            os.replace(temp_path, self._index_path)
-        except OSError as exc:
-            raise IndexWriteError("Vector index could not be written atomically.") from exc
-        finally:
-            if temp_path.exists():
-                temp_path.unlink(missing_ok=True)
+            with self._connect() as conn:
+                self._insert_records(conn, records)
+                conn.commit()
+        except Exception as e:
+            raise IndexWriteError(f"Failed to write records: {e}")
+
+    def replace_document(self, filename: str, records: List[VectorRecord]):
+        try:
+            with self._connect() as conn:
+                conn.execute("DELETE FROM vector_records WHERE filename = ?", (filename,))
+                self._insert_records(conn, records)
+                conn.commit()
+        except Exception as e:
+            raise IndexWriteError(f"Failed to replace document {filename}: {e}")
+
+    def _insert_records(self, conn: sqlite3.Connection, records: List[VectorRecord]):
+        data = []
+        for rec in records:
+            filename = rec.metadata.get("filename", rec.filename)
+            chunk_index = rec.metadata.get("chunk_index", self._chunk_index(rec))
+            data.append((
+                rec.chunk_id,
+                filename,
+                chunk_index,
+                rec.text,
+                json.dumps(rec.embedding),
+                json.dumps(rec.metadata),
+            ))
+
+        conn.executemany("""
+            INSERT INTO vector_records (chunk_id, filename, chunk_index, text, embedding, metadata)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(chunk_id) DO UPDATE SET
+                filename=excluded.filename,
+                chunk_index=excluded.chunk_index,
+                text=excluded.text,
+                embedding=excluded.embedding,
+                metadata=excluded.metadata
+        """, data)
+
+    def _chunk_index(self, record: VectorRecord) -> int:
+        try:
+            return int(record.chunk_id.split(":")[-1])
+        except:
+            return 0
+    
+    def get_documents(self) -> list[dict]:
+        """Возвращает список всех документов с количеством чанков"""
+        try:
+            with self._connect() as conn:
+                rows = conn.execute("""
+                    SELECT filename, COUNT(*) as chunk_count 
+                    FROM vector_records 
+                    GROUP BY filename 
+                    ORDER BY filename
+                """).fetchall()
+
+            return [
+                {"filename": row["filename"], "chunk_count": row["chunk_count"]}
+                for row in rows
+            ]
+        except Exception as e:
+            logger.error(f"Failed to get documents: {e}")
+            return []
+
+    def delete_document(self, filename: str) -> bool:
+        """Полностью удаляет документ из индекса"""
+        try:
+            with self._connect() as conn:
+                cursor = conn.execute(
+                    "DELETE FROM vector_records WHERE filename = ?", 
+                    (filename,)
+                )
+                conn.commit()
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Failed to delete document {filename}: {e}")
+            return False
+
+    def document_exists(self, filename: str) -> bool:
+        """Проверяет, существует ли документ в индексе"""
+        try:
+            with self._connect() as conn:
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM vector_records WHERE filename = ?", 
+                    (filename,)
+                ).fetchone()[0]
+                return count > 0
+        except:
+            return False
+
+
+# Для обратной совместимости (можно потом убрать)
+JsonVectorStore = VectorStore
