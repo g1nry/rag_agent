@@ -9,6 +9,7 @@ from ..tools.registry import tool_registry
 from ..tools.langchain_adapter import LangChainToolAdapter
 from ..core.config import get_settings
 from ..core.observability import langchain_config
+from ..guardrails.guardrails import check_input, check_output
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,12 @@ class RedTeamAgent:
         if not self.initialized:
             await self.initialize()
 
+        # Guardrails: проверка входа до вызова агента (инструменты не выполняются).
+        input_refusal = check_input(message)
+        if input_refusal:
+            logger.warning(f"guardrails: входной запрос заблокирован (thread={thread_id})")
+            return {"response": input_refusal, "thread_id": thread_id, "success": True, "blocked": "input"}
+
         inputs = {"messages": [HumanMessage(content=message)]}
 
         try:
@@ -73,6 +80,13 @@ class RedTeamAgent:
                 ),
             )
             final_message = result["messages"][-1].content
+
+            # Guardrails: проверка выхода (утечки в ответе модели).
+            output_refusal = check_output(final_message)
+            if output_refusal:
+                logger.warning(f"guardrails: ответ заблокирован (thread={thread_id})")
+                return {"response": output_refusal, "thread_id": thread_id, "success": True, "blocked": "output"}
+
             return {"response": final_message, "thread_id": thread_id, "success": True}
         except Exception as e:
             logger.error(f"Agent error: {e}")

@@ -23,3 +23,13 @@ rails:
       - output_content_safety_check
       - output_pii_leak_check
       - output_injection_check
+      - output_leak_check
+      - output_secret_credential_leak
+      - output_pii_financial_leak
+      - output_explosives_weapons_content
+      - output_drug_synthesis_content
+      - output_cbrn_content
+      - output_malware_exploit_content
+      - output_fraud_content
+      - output_self_harm_content
+      - output_csam_block
